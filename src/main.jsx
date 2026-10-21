@@ -18,6 +18,8 @@ function App({access}) {
   const [loadError, setLoadError] = useState('');
   const [saveError, setSaveError] = useState('');
   const [toast, setToast] = useState('');
+  const [historyBusy,setHistoryBusy]=useState(false);
+  const historyExpanded=useRef(false);
   const decisionKey = 'smartmed-reminders-v1:' + (access.user?.id || 'on-device');
   const [decisions, setDecisions] = useState(() => readDecisions(localStorage, decisionKey));
   const [active, setActive] = useState(() => document.visibilityState === 'visible' && document.hasFocus());
@@ -26,7 +28,7 @@ function App({access}) {
     if (writing.current || loading.current) return;
     const current = generation.current;
     loading.current = true;
-    try {const data = await smartmed.load(); if (current === generation.current) {setWorkspace(data); setLoadError('');}}
+    try {const data = await smartmed.load(); if (current === generation.current) {applyWorkspace(data); setLoadError('');}}
     catch(e) {if (current === generation.current) setLoadError(e.message);}
     finally {loading.current = false;}
   }
@@ -50,6 +52,22 @@ function App({access}) {
     setDecisions(next);
     try {localStorage.setItem(decisionKey, JSON.stringify(next));} catch { /* In-memory decisions still prevent repeats in this session. */ }
   }
+  function applyWorkspace(data) {
+    setWorkspace(previous => {
+      if (!historyExpanded.current || !previous) return data;
+      const ids = new Set(data.events.map(e => e.id));
+      return {...data,events:[...data.events,...previous.events.filter(e => !ids.has(e.id))],nextCursor:previous.nextCursor};
+    });
+  }
+  async function loadOlderHistory() {
+    if(historyBusy || !workspace?.nextCursor)return;
+    setHistoryBusy(true);
+    try {
+      const data=await smartmed.loadHistory(workspace.nextCursor);historyExpanded.current=true;
+      setWorkspace(previous=>{const ids=new Set(previous.events.map(e=>e.id));return {...previous,events:[...previous.events,...data.events.filter(e=>!ids.has(e.id))],nextCursor:data.nextCursor};});
+      setLoadError('');
+    } catch(e){setLoadError(e.message);}finally{setHistoryBusy(false);}
+  }
   function notify(message) {setToast(message); clearTimeout(timer.current); timer.current = setTimeout(() => setToast(''), 5000);}
   function openModal(value) {setSaveError(''); setModal(value);}
   async function mutate(action, message) {
@@ -58,7 +76,7 @@ function App({access}) {
     try {await action();}
     catch(e) {setSaveError(e.message); writing.current = false; setBusy(false); return;}
     setModal(null); notify(message);
-    try {setWorkspace(await smartmed.load()); setLoadError('');}
+    try {applyWorkspace(await smartmed.load()); setLoadError('');}
     catch {setLoadError('Your changes were saved, but this view could not refresh. Please reload your schedule.');}
     finally {writing.current = false; setBusy(false);}
   }
@@ -104,6 +122,7 @@ function App({access}) {
         {page==='History' && <>
           <div className="history-header"><span className="connection-label"><span className={connected?'connected-dot':'notice-dot'}/>{connected?'Box connected':'Box not connected'}{workspace.device?.lastSeen && <small>Last update {eventTime(workspace.device.lastSeen,zone)}</small>}</span>{events.length>0 && <button className="secondary" onClick={download}><Download size={16}/>Export</button>}</div>
           {!events.length ? <section className="empty-state history-empty"><span className="welcome-icon"><History size={30}/></span><h2>No box openings recorded yet.</h2><p>{connected?'Opening records will appear here as your box sends them.':'Once your medicine box is connected, its opening records will appear here.'}</p></section> : <section className="history-list">{events.map(e=><article key={e.id}><span className="event-icon"><History size={18}/></span><div><h2>{e.type==='BOX_OPENED'?'Box opened':'Box closed'}</h2><p>{e.reminderContext?`During the ${e.reminderContext.label.toLowerCase()} reminder`:'No associated reminder'}</p></div><time dateTime={e.occurredAt}>{eventTime(e.occurredAt,zone)}</time></article>)}</section>}
+          <div className="history-more">{workspace.nextCursor&&<button className="secondary" disabled={historyBusy} onClick={loadOlderHistory}>{historyBusy?'Loading…':'Load older records'}</button>}</div>
           <p className="quiet-note">The shared lid records box access only. It cannot identify which medicine was selected or whether it was taken.{events.length>0?' Export includes the records currently loaded.':''}</p>
         </>}
       </>}

@@ -3,7 +3,7 @@ import {DATA_MODE, BASE_URL} from './config.js';
 import {csrfHeaders} from './auth.js';
 export {DATA_MODE} from './config.js';
 
-// ESP32 CONNECTION PLACEHOLDER: the browser calls your backend, never the board directly.
+// The browser calls Express, never the board directly.
 // Local mode starts empty and stores only user-entered schedules. It cannot create sensor events.
 function readLocal() {
   try {const saved = localStorage.getItem(STORAGE_KEY); return saved ? validateWorkspace(JSON.parse(saved)) : createWorkspace();}
@@ -18,7 +18,7 @@ async function request(path, {method = 'GET', body} = {}) {
   try {
     response = await fetch(BASE_URL + path, {
       method, credentials: 'include', signal: AbortSignal.timeout(10000),
-      headers: {'Accept': 'application/json', ...(body ? {'Content-Type': 'application/json', ...csrfHeaders()} : {})},
+      headers: {'Accept': 'application/json', ...csrfHeaders(), ...(body ? {'Content-Type': 'application/json'} : {})},
       body: body ? JSON.stringify(body) : undefined,
       // Session CSRF tokens come from /auth/session and /auth/login.
       // Device credentials and Wi-Fi passwords belong only in backend/firmware provisioning.
@@ -29,15 +29,18 @@ async function request(path, {method = 'GET', body} = {}) {
     throw new Error('Your session has expired. Please sign in again.');
   }
   if (response.status === 403) throw new Error('You do not have permission to change this schedule.');
-  if (!response.ok) throw new Error('Your changes could not be completed. Please try again.');
+  if (!response.ok) {let message; try {message = (await response.json()).error;} catch {} throw new Error(message || 'Your changes could not be completed. Please try again.');}
   if (response.status === 204) return null;
   try {return await response.json();} catch {throw new Error('Your data could not be loaded. Please try again.');}
 }
 export const smartmed = {
   async load() {
-    // CONNECTION PLACEHOLDER: implement the workspace endpoint described in docs/02_MICROCONTROLLER_INTEGRATION.md.
+    // The Express API implements the contract in docs/02_MICROCONTROLLER_INTEGRATION.md.
     // Connection failures never insert sample records.
     return DATA_MODE === 'local' ? readLocal() : validateWorkspace(await request('/workspace'));
+  },
+  async loadHistory(cursor) {
+    return request('/events?' + new URLSearchParams({cursor}));
   },
   async saveMedicine(medicine) {
     if (DATA_MODE === 'live') return request(`/medicines${medicine.id ? '/' + encodeURIComponent(medicine.id) : ''}`, {method: medicine.id ? 'PATCH' : 'POST', body: medicine});

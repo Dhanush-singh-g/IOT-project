@@ -1,179 +1,186 @@
 # 2. Integrate the web app with the microcontroller
 
-For the complete component design, see [System architecture](04_SYSTEM_ARCHITECTURE.md). For physical wiring, see [Hardware connections](03_HARDWARE_CONNECTIONS.md). Hardware setup is intentionally kept outside the user interface. The app has patient sign-in followed by Today, Schedule, and History. It contains no sample patients, sample medicines, device simulator, or invented box readings.
-
-## 1. Connection overview
+The Express API is implemented in `server/`, backed by PostgreSQL. The firmware starter is in `firmware/SmartMed/`. The web interface remains Today, Schedule, and History; hardware provisioning and calibration stay in operator tooling.
 
 ```text
-React frontend <-- HTTPS --> Spring Boot + PostgreSQL <-- HTTPS / Wi-Fi --> ESP32
-                                                                     |
-                                                one ultrasonic sensor + four LEDs + buzzer
+React dashboard <-- HTTPS --> Express API + PostgreSQL <-- HTTPS / Wi-Fi --> ESP32
+                                                                            |
+                                                     one lid sensor + four LEDs + one buzzer
 ```
 
-There are four labelled sections: Morning, Afternoon, Evening, Night, under one shared lid. Several medicines may share a section. The one sensor reports `BOX_OPENED` and `BOX_CLOSED`; it cannot identify a selected compartment, medicine, quantity, or ingestion. Reminder association is timing context only.
+The one ultrasonic sensor reports whole-box OPENED/CLOSED events, never medicine selection or intake. A caregiver fills the four labelled sections daily. See [Hardware connections](03_HARDWARE_CONNECTIONS.md) and [System architecture](04_SYSTEM_ARCHITECTURE.md).
 
-## 2. Configuration and code locations
+## 1. Start the real services
 
-| File | Purpose |
-| --- | --- |
-| `.env.example` copied to `.env.local` | Public API URL and `local` or `live` data mode |
-| `src/api/smartmed.js` | API integration hooks; search `CONNECTION PLACEHOLDER` |
-| `src/model.js` | Empty workspace structure, validation, time helpers, CSV escaping |
-| `src/main.jsx` | User-facing Today, Schedule, History; no sensor configuration UI |
-| Separate firmware project | Credentials, Wi-Fi, calibrated sensing, timekeeping, local alarms, durable events |
-
-Default mode is `local`: an empty schedule with only user-entered data saved in this browser, no sensor events or physical alarms. In-app reminder popups work for user-entered schedules while the dashboard is active. Earlier demo storage keys are preserved but ignored. The new storage key is `smartmed-personal-workspace-v1`.
-
-After implementing the backend:
+Follow [Run the application](01_RUN_APPLICATION.md), create your real patient account, and add the prescribed schedule. Development uses a same-origin Vite proxy to Express; production Express serves the built app directly. `.env.local` contains only public frontend configuration:
 
 ```dotenv
 VITE_DATA_MODE=live
-VITE_API_BASE_URL=https://YOUR-BACKEND/api/v1
+VITE_API_BASE_URL=/api/v1
 ```
 
-Restart Vite after editing `.env.local`. Browser variables are public; never place device tokens or Wi-Fi passwords in them. Live mode polls every 10 seconds. Invalid data, failed writes, and connection errors are reported without synthetic fallback. No manual create-event endpoint is exposed by the frontend adapter.
+Server `.env` holds the database URL and origin; firmware `include/secrets.h` holds Wi-Fi/device credentials. Both are ignored by Git. Never place them in `VITE_*` values.
 
-## 3. Frontend contract
+## 2. Provision and calibrate the box
 
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /workspace` | Authenticated, authorized schedule and real event snapshot |
-| `POST /medicines` | Create a medicine and atomically apply its section reminder time |
-| `PATCH /medicines/{id}` | Edit a medicine and atomically apply its section reminder time |
-| `DELETE /medicines/{id}` | Remove future entry; preserve immutable historical events |
-| `PUT /slots` | Update all four section times; unused times may be null |
+With the web/API running, in another terminal:
 
-Medicine mutations contain `name`, `strength`, `quantity`, optional `instructions`, `slotId`, and `reminderTime` (`HH:mm`). An edit also includes `id`. **Apply the medicine and its shared section time in one database transaction.** Changing the time affects every medicine in that section. Return non-2xx on validation failure so the UI does not claim a save. Successful writes return JSON or HTTP 204; the app then reloads the workspace.
-
-Enforce the four exact slot IDs and valid times server-side. Sections with medicines must have a time; unused sections may have `time: null`. Prevent overlapping follow-up windows, including across midnight. `PUT /slots` takes `{"slots": [...]}`.
-
-### Empty workspace response shape
-
-```json
-{
-  "slots": [
-    {"id":"morning","label":"Morning","time":null},
-    {"id":"afternoon","label":"Afternoon","time":null},
-    {"id":"evening","label":"Evening","time":null},
-    {"id":"night","label":"Night","time":null}
-  ],
-  "medicines": [],
-  "events": [],
-  "settings": {"timezone":"Asia/Kolkata","grace":20},
-  "device": null
-}
+```sh
+npm run device:provision
 ```
 
-Populate only real user records. Medicine records require a stable string `id`, `name`, `strength`, `quantity`, `slotId`, and optionally `instructions`. Never seed production records from examples. `settings.timezone` is the patient's real IANA timezone; `grace` is an integer from 1 to 180.
+Enter your patient email and password at the prompts. The password is hidden. The command signs in through the real API and prints a **device ID and token once** for controlled provisioning. Store them securely in the ignored firmware `secrets.h`. The database stores only a hash of the token. One box is supported per patient.
 
-Each real event must have a string `id`, `type` (`BOX_OPENED` or `BOX_CLOSED`), valid UTC `occurredAt`, and optional `reminderContext`. A context has the reminder `label` and can retain internal slot/date/prescription snapshots for audit. Do not imply that context proves medicine selection. For unscheduled events, use null. Preserve context after schedule edits.
+A newly provisioned device is **uncalibrated**. Do not operate it as a reliable medicine monitor until testing the actual enclosure. To save measured calibration, create an untracked JSON file with these fields:
 
-When a box has actually been provisioned, `device` may contain its `id`, heartbeat-derived `online` boolean, and UTC `lastSeen`. The user interface displays connected only when the report is less than 90 seconds old. Sensor distances, output states, firmware versions, and thresholds do not belong in this user view.
+```text
+closedBaselineCm: measured closed-lid distance, in cm
+openThresholdCm: measured increase above baseline that reliably indicates opening
+closeThresholdCm: a lower increase threshold that reliably indicates closed
+stabilityMs: required duration of stable valid readings
+```
 
-Schedule previews are based on entered times, not claims about completed intake. The app makes no missed-dose conclusion from absent events. Keep event ingestion and reminder reconciliation on the backend. Do not encode recurring medicine entries as mutable “taken” flags.
+The file must be valid JSON with numeric values, no comments, and `openThresholdCm > closeThresholdCm`. The baseline must be at least 2 cm and within sensor range; baseline plus opening threshold must not exceed 400 cm. These constraints do not establish that your enclosure works—measure and test it.
 
-For long histories, add cursor pagination/date filtering to the API adapter and UI. Existing export covers loaded events only. The browser uses cookie credentials and the session CSRF token in the `X-CSRF-Token` header. Implement the server-side contract below before production writes.
+```sh
+npm run device:provision -- --device-id YOUR_DEVICE_ID --calibration PATH_TO_YOUR_JSON
+```
 
-## 4. ESP32-facing endpoints to implement in Spring Boot
+To provision a new device with calibration, omit `--device-id` and optionally add `--label "Medicine box"`. Configuration is versioned and firmware reports its applied version.
 
-These endpoints are for firmware, not direct browser calls. Prefix them with `/api/v1` as appropriate.
+Rotate or revoke the credential:
 
-| Route | Firmware operation |
+```sh
+npm run device:provision -- --device-id YOUR_DEVICE_ID --rotate
+npm run device:provision -- --device-id YOUR_DEVICE_ID --revoke
+```
+
+Rotation invalidates the old token. Revocation stops device API access; history remains. To replace a physical box, rotate the existing device's token and provision that identity on the replacement. Device IDs alone never grant access.
+
+## 3. Configure and build the ESP32 starter
+
+Install PlatformIO, for example the PlatformIO IDE extension for VS Code. Open `firmware/SmartMed`. Copy `include/secrets.example.h` to `include/secrets.h` and set your real:
+
+- 2.4 GHz Wi-Fi SSID and password.
+- Public/reachable HTTPS API base URL ending in `/api/v1`.
+- Provisioned device ID and token.
+- PEM root CA that validates the HTTPS server.
+- `USE_RTC=true` only if the optional DS3231 is wired.
+
+Firmware deliberately refuses HTTP or an empty CA and never calls `setInsecure()`. A development server on a private cloud address is not reachable from home Wi-Fi. Provide a properly reachable TLS endpoint or trusted local TLS proxy; do not disable verification to work around this.
+
+From that project folder:
+
+```sh
+pio run
+pio run -t upload
+pio run -t buildfs
+pio run -t uploadfs
+pio device monitor
+```
+
+Initialize the LittleFS image **only for first-time provisioning**. Re-uploading the filesystem erases persisted events, cached schedules, and access acknowledgments. Do not do that as a routine firmware upgrade. On storage corruption the starter stops rather than silently formatting or discarding records. Preserve/recover the storage before continuing.
+
+The starter targets the classic ESP32-WROOM-32 pin map in the wiring guide. It uses ArduinoJson, RTClib, Wi-Fi HTTPS, LittleFS, and separate sensing/network tasks. It includes scheduled LED/buzzer output, persistent reminder cache, shared-lid transition events, upload retries, heartbeat, and a bounded 64-event queue. Queue/storage faults make monitoring unreliable and must be resolved, not interpreted as missed medication. Validate power-loss behavior and queue capacity for your intended offline duration.
+
+**Verification status:** web/API/PostgreSQL integration is exercised with real services. Firmware compilation in the cloud environment was blocked by registry access to `api.registry.platformio.org` and `dl.registry.platformio.org`. The starter is not yet compile-verified or tested on a physical board. Run `pio run` locally and complete the hardware acceptance checks before use.
+
+## 4. Firmware API contract
+
+All routes are under `/api/v1/devices/{deviceId}` and require `Authorization: Bearer YOUR_DEVICE_TOKEN`. Device routes do not accept browser sessions as device credentials.
+
+| Method and suffix | Implemented behavior |
 | --- | --- |
-| `GET /devices/{id}/config` | Download calibrated sensor settings, desired configuration version, and LED GPIO mapping/slot identity |
-| `GET /devices/{id}/reminders?from=...&to=...` | Download dated reminder instances for the next 48 hours |
-| `POST /devices/{id}/events` | Upload durable batches of shared-lid events |
-| `POST /devices/{id}/heartbeat` | Report readings, outputs, clock health, configuration versions, queue state, and last event sequence |
+| `GET /config` | Measured calibration or `calibrated:false`, pin mapping, repeat interval, timezone, server time, configuration/schedule versions |
+| `GET /reminders` | Complete versioned snapshot covering the current reminder window and next 48 hours |
+| `POST /events` | Atomic, deduplicated batch upload; acknowledges only committed IDs |
+| `POST /heartbeat` | Stores current health/readings/output/version telemetry and server receipt time |
 
-The backend generates stable reminder-instance IDs, `scheduledAt` and `windowEndsAt` in UTC, slot ID, and schedule version. Return a complete snapshot for a stated horizon so firmware can remove canceled future reminders. The slot identifies the LED to blink, not a sensor channel. Store the snapshot persistently and surface an expired schedule; do not silently keep obsolete alarms.
+Reminders have stable IDs for a patient/date/slot/schedule version, with UTC `scheduledAt` and `windowEndsAt`. A schedule edit produces a new version; firmware replaces the cached future snapshot. It must not continue an expired schedule or use mismatched configuration/schedule versions. Ambiguous/faulty local clocks must not generate invented timestamps.
 
-Example firmware event upload:
+A versioned configuration includes `sensor` with calibration, `calibrated`, `pins`, `repeatReminderMinutes`, `followUpMinutes`, and `scheduleVersion`. One slot maps to one LED, not a sensor channel. Calibrating sensors belongs outside the patient dashboard.
+
+### Upload shape
 
 ```json
 {
   "events": [
     {
-      "eventId":"a-unique-persisted-uuid",
-      "deviceId":"SM-HOME-001",
-      "type":"BOX_OPENED",
-      "occurredAt":"2027-01-15T02:34:00Z",
-      "sequence":1042,
-      "timeQuality":"RTC_SYNCED",
-      "sensorType":"ULTRASONIC",
-      "distanceCm":14.1
+      "eventId": "a-device-generated-unique-id",
+      "deviceId": "the-provisioned-device-uuid",
+      "type": "BOX_OPENED",
+      "occurredAt": "2027-01-15T02:34:00Z",
+      "sequence": 1042,
+      "timeQuality": "RTC_SYNCED",
+      "sensorType": "ULTRASONIC",
+      "distanceCm": 14.1
     }
   ]
 }
 ```
 
-There is deliberately **no detected `compartmentId` or medicine ID**. Backend association uses a valid event timestamp and one active reminder window. It can attach the matching reminder-instance ID internally and present the `reminderContext` snapshot above. Unscheduled openings remain visible without satisfying a reminder.
+This illustrates the format only; replace it with actual measurements and timestamps. The device ID must be the provisioned UUID. `type` is `BOX_OPENED` or `BOX_CLOSED`; clock quality is `RTC_SYNCED`, `NTP_SYNCED`, or `SYNCED`. Invalid echo distance may be null. Upload at most 100 events per request. Events can be at most 30 days old, cannot predate provisioning by more than two minutes, and cannot be over two minutes in the future. Bad clocks or rejected events require diagnosis; do not change original event IDs/timestamps merely to make retries pass.
 
-Commit to the database before replying:
+Successful response:
 
 ```json
-{"acknowledgedEventIds":["a-unique-persisted-uuid"]}
+{"acknowledgedEventIds":["a-device-generated-unique-id"]}
 ```
 
-Use a unique `(device_id, event_id)` database constraint. An identical retry returns the same acknowledgment without duplicating history; conflicting payloads under the same ID are rejected. Firmware deletes only acknowledged events. Retrying uploads must reuse the original event ID and occurrence time.
+A unique `(device_id,event_id)` constraint prevents duplicates. Identical retries are acknowledged again; the same ID with different normalized content returns HTTP 409 and rolls back the entire batch. Delete local events only after acknowledgment. SQL transactions preserve all-or-nothing batch writes.
 
-Configuration must include measured closed baseline, open and lower close thresholds, stability window, invalid-reading handling, reminder repeat/follow-up intervals, and a version. Sensor thresholds belong in protected device configuration, not the patient interface. The backend must reject a threshold incompatible with the calibrated closing threshold. Firmware validates and atomically applies a configuration, then reports `appliedConfigVersion`. Retain and track the pending configuration in the backend until acknowledgment; keep diagnostics out of the patient interface.
+For an opening inside a valid historical reminder window, the backend attaches timing context using the schedule version active at occurrence time. It preserves that context after later prescription edits. There is no detected compartment ID and no TAKEN flag.
 
-## 5. Firmware behavior
+Heartbeat JSON fields:
 
-1. Connect to 2.4 GHz Wi-Fi; establish valid time using network time and, preferably, a DS3231 backup clock.
-2. Read the one shared-lid sensor with bounded echo timeouts and filtered valid readings.
-3. Detect stable CLOSED → OPEN and OPEN → CLOSED transitions with calibrated thresholds and hysteresis. Never equate no echo with open without a validated detection method.
-4. At a reminder time, blink only its slot LED and sound the one external buzzer. This must work without Wi-Fi.
-5. On the first opening during that window, stop that reminder's buzzer/blinking, and persist a `BOX_OPENED` event. This acknowledges access only. Do not suggest medicine intake is verified.
-6. Wait for a stable close before another opening can be logged. Report close events too.
-7. Upload queued events and heartbeats without blocking sensing or reminders. Retry failures with backoff/jitter.
-8. After restart, reconcile clock, queue, lid state, and active reminder. An already-open lid at boot is a state report, not proof of a new opening.
+```text
+firmwareVersion: string
+appliedConfigVersion, appliedScheduleVersion: nonnegative integers
+clockHealthy, sensorHealthy, buzzerActive: booleans
+queueDepth, lastSequence: nonnegative integers
+lidState: OPEN | CLOSED | UNKNOWN
+distanceCm: number or null
+ledSlotId: morning | afternoon | evening | night | null
+```
 
-If the lid was already open when a reminder became due, flag that condition and continue a defined reminder policy; do not fabricate a fresh opening. If monitoring fails, record the monitoring gap.
+Send heartbeats about every 30 seconds. The app displays connected only for a recent heartbeat (under 90 seconds); heartbeat receipt is not proof that no events were lost during an earlier offline period.
 
-## 6. Connectivity, auth, and verification
+## 5. Browser API contract
 
-- Browser API requests use `credentials: include`. Implement backend session login, authorization, CSRF protection, and the adapter's CSRF-header placeholder before enabling mutations with real patient data.
-- Prefer frontend and API on the same HTTPS origin. For separate origins, explicitly configure CORS, cookie attributes, and credentials; never use wildcard origins with credentialed requests.
-- Each ESP32 needs its own revocable device credential. Keep it out of Git, logs, URLs, and the React bundle. Authenticate the device ID against that credential. Validate server certificates on the ESP32.
-- `localhost` on the ESP32 means the ESP32, not your development computer. Use a reachable LAN backend address for a controlled bench test, or a public HTTPS endpoint for deployment. Home Wi-Fi cannot reach an isolated cloud workspace's private IP directly.
-- Store timestamps in UTC; render the patient timezone. Production backend handles timezone/DST rules and window reconciliation. Local-only schedules use the browser timezone. Live workspaces use the patient timezone returned by the backend.
-- Preserve queued events across power loss. A heartbeat does not prove an offline window had no openings. Finalize `No opening recorded` only after acknowledged event coverage and healthy monitoring establish it; otherwise keep `Awaiting sync` or `Monitoring unavailable`.
-- Daily refilling is manual. The system does not measure pill count or verify loading.
+Browser requests use HttpOnly session cookies, not device tokens. Mutations require the exact allowed `Origin` and session-bound `X-CSRF-Token`.
 
-Acceptance check: a physical shared-lid opening → one committed backend event → updated dashboard within its polling interval. Repeat the upload, disconnect/reconnect Wi-Fi, restart the board, cross a local midnight, and edit a schedule. Confirm no duplicate event, false medicine confirmation, or lost historical context.
-
-## 7. Patient session endpoints
-
-Implement these routes under the same `/api/v1` base. `src/api/auth.js` handles them; `src/PatientLogin.jsx` renders the page. PostgreSQL is the planned persistent store; no database or account server is included in this repository yet.
-
-| Method and path | Required behavior |
+| Endpoint under `/api/v1` | Behavior |
 | --- | --- |
-| `GET /auth/session` | Return HTTP 200 with `{user: null, csrfToken}` for anonymous callers, or a verified patient user and CSRF token for authenticated callers |
-| `POST /auth/login` | Accept `{email, password}` with the anonymous session's `X-CSRF-Token`; verify credentials on the server, rotate the session, set a secure HttpOnly session cookie, and return user plus a rotated CSRF token |
-| `POST /auth/logout` | Validate session/CSRF, invalidate the server session and expire its cookie; return HTTP 204 |
+| `GET /auth/session` | Anonymous/patient session, CSRF token, registration availability |
+| `POST /auth/register` | Creates a real empty patient account if registration is enabled |
+| `POST /auth/login` | Verifies the password hash; rotates the session and CSRF token |
+| `POST /auth/logout` | Invalidates the server session and expires its cookie |
+| `GET /workspace` | Patient-scoped slots, medicines, real events, device summary, next history cursor |
+| `POST /medicines` | Atomically creates a medicine and applies its shared slot time |
+| `PATCH /medicines/{id}` | Atomically edits the patient's medicine and shared slot time |
+| `DELETE /medicines/{id}` | Removes only that patient's entry, retaining event history |
+| `PUT /slots` | Validates and updates all four slot times |
+| `GET /events?cursor=...` | Patient-scoped cursor pagination, 100 records per page |
+| `POST /devices` | Patient-authenticated operator provisioning; returns one-time token |
+| `PATCH /devices/{id}/config` | Saves measured calibration with a new version |
+| `POST /devices/{id}/rotate-token` | Replaces the device token |
+| `DELETE /devices/{id}` | Revokes the device credential |
 
-Authenticated response shape:
+Registration accepts `displayName`, `email`, `password` (12–128 characters), and real IANA `timezone`. Login accepts `email` and `password`. Session/login/registration responses include `{user:{id,displayName,role:"PATIENT"},csrfToken}`; anonymous session has `user:null`. Tokens/passwords are never stored in browser localStorage. Session IDs are hashed in PostgreSQL; passwords use salted scrypt. Login/registration are rate-limited and sessions expire server-side.
 
-```json
-{
-  "user": {
-    "id": "server-assigned-patient-id",
-    "displayName": "the actual patient's display name",
-    "role": "PATIENT"
-  },
-  "csrfToken": "server-generated-session-bound-token"
-}
-```
+Medicine mutations contain `name`, `strength`, `quantity`, optional `instructions`, `slotId`, `reminderTime` (`HH:mm`), and `id` on edits. Slots are the four fixed daily IDs. Several medicines can share one slot. All medicines in that slot use the same time. Empty slots may have null times; populated slots may not. The server rejects overlapping reminder windows and scopes every query to the authenticated patient.
 
-This is a response contract, not a seeded account. The UI accepts only verified `PATIENT` sessions. Store salted password hashes using an appropriate password-hashing algorithm such as Argon2id or bcrypt, never plaintext passwords. Enforce session expiry, login rate limiting, patient authorization, cookie security, and CSRF checks on the server. The browser does not store passwords, auth tokens, or patient sessions in localStorage. It keeps only the CSRF token in memory. Configure session cookies with Secure/HttpOnly and an appropriate SameSite setting; use same-origin HTTPS where possible.
+The workspace matches `src/model.js`: `slots`, `medicines`, `events`, `settings:{timezone,grace}`, and `device` or null. Events have `id`, `type`, UTC `occurredAt`, and optional `reminderContext`. The frontend loads older history with cursors and exports loaded records only.
 
-Return HTTP 401 for invalid credentials/session expiry and 429 for throttling. A 401 from a workspace request returns the app to sign-in; a 403 is an authorization failure, not a successful save. A failed logout leaves the patient view open with a retry message so the app does not falsely claim the server session ended. Provision patient accounts through the backend; self-registration and password recovery are not implemented here.
+## 6. Acceptance checks
 
-## 8. Active-dashboard reminders
+1. Create two real test accounts; verify schedules and history are isolated.
+2. Pair a device, configure measured calibration, and download its stable reminder snapshot.
+3. Verify physical closed/open detection without false events from no echo, restart, or medicine packaging.
+4. Confirm **physical opening → committed backend record → web History**, within the web polling interval.
+5. Retry an identical upload and verify one record; reuse an ID with changed data and verify rejection.
+6. Disconnect Wi-Fi, generate events, restart without erasing LittleFS, reconnect, and verify queued delivery.
+7. Check the correct LED and one shared buzzer, an expired schedule, invalid time, and an already-open lid at boot.
+8. Rotate/revoke a token and confirm the old credential fails.
 
-`src/reminders.js` selects a slot only when it has user-entered medicines and its scheduled time has arrived in the patient's timezone. The dashboard checks every five seconds and on focus/visibility changes. It shows the popup only while visible and focused, with a valid loaded schedule and no schedule-edit dialog or connection error.
-
-The popup lists the actual prescribed entries and section label. Dismiss and View medicines suppress that dated slot/time reminder, not medicine intake. Five-minute snooze can recur after the chosen delay. Decisions are scoped to the signed-in server user ID (or the explicitly local workspace) and stored as minimal reminder IDs/timestamps, separately from box history. They are not sent to event ingestion and do not satisfy reminder instances on the backend. Changed reminder times and new days have separate keys. Stale reminders/snoozes are not replayed hours later.
-
-This is an in-app convenience, not background notification delivery. Browser throttling, focus, tab closure, sign-out, and device sleep affect it. Keep physical reminders on ESP32 and implement remote notification delivery separately if required.
+Backend protocol tests cannot establish reliable physical sensing or confirm medicine intake. Do the enclosure/power/calibration checks in [Hardware connections](03_HARDWARE_CONNECTIONS.md).

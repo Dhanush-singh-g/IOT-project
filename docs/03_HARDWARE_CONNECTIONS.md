@@ -1,6 +1,6 @@
 # 3. Hardware connections
 
-This proposed bench-build plan matches the current dashboard: **four labelled time-slot sections under one lid, one ultrasonic sensor for the whole box, four LEDs, and one external buzzer**. It has not been physically tested.
+Firmware for this pin map is included in `firmware/SmartMed` (compile verification and physical testing are still outstanding). This proposed bench-build plan matches the current dashboard: **four labelled time-slot sections under one lid, one ultrasonic sensor for the whole box, four LEDs, and one external buzzer**. It has not been physically tested.
 
 Assumptions: a classic **ESP32-WROOM-32 development board** exposing the GPIOs below, and one **5 V HC-SR04-style module with VCC/TRIG/ECHO/GND pins**. Do not reuse this plan unchanged for ESP32-C3/S3/WROVER boards or other sensors. Confirm actual board and module datasheets before assembly.
 

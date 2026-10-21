@@ -1,102 +1,119 @@
 # 1. Run the application
 
-These commands work in Windows PowerShell, macOS Terminal, and Linux terminals.
+SmartMed now includes a React frontend, Express backend, and PostgreSQL database. No default users, passwords, medicines, or box events are created.
 
-## 1. Install the prerequisites
+## Prerequisites
 
-- Install a current Node.js LTS release (Node 22 or later): https://nodejs.org/
-- Install Git: https://git-scm.com/downloads
-- After installation, open a new terminal.
+Install:
 
-Verify:
+- [Node.js LTS](https://nodejs.org/) 22 or later.
+- [Git](https://git-scm.com/downloads).
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) on Windows/macOS, or Docker Engine with the Compose plugin on Linux. Start Docker before continuing.
+
+Check in a new terminal:
 
 ```sh
 node --version
 npm --version
 git --version
+docker compose version
 ```
 
-## 2. Clone and start
+## First start
 
 ```sh
 git clone https://github.com/Dhanush-singh-g/IOT-project.git
 cd IOT-project
 npm ci
-npm run dev -- --port 5173
+npm run setup
+docker compose up -d --wait db
+npm run db:migrate
+npm run dev
 ```
 
-Keep this terminal open. Open http://localhost:5173 in your browser. If that port is already occupied, Vite prints the next available port; use the address it prints.
+Open **http://localhost:5173** and keep the terminal running. Vite serves the frontend and proxies `/api` to Express on port 3001. Use `localhost`, matching `APP_ORIGIN`; do not substitute a different origin without changing configuration. Ports 5173, 3001, and 5432 must be available.
 
-If the repository is private, sign in using your Git installation's supported GitHub authentication flow when prompted. You must have access to the repository; do not paste tokens into the clone URL.
+`npm run setup` generates a random database password in private `.env`, and `.env.local` selects the real backend. Existing files are preserved. If upgrading from local-only mode, set `VITE_DATA_MODE=live` in `.env.local` and restart. Never commit these files or paste their credentials into chat. Local browser-only data is not automatically imported into PostgreSQL.
 
-No ESP32, backend, database, .env file, or credentials are required for local mode. Only initial dependency installation requires Internet access. The optional Google Fonts request can fall back to local fonts.
+If you already cloned the repository, stop the old app and use `git pull --ff-only origin main` instead of cloning. Preserve any local source changes before pulling.
 
-## 3. Try the app
+## Create your actual account
 
-1. The app opens on **Patient sign in**. Until the live account service is connected, choose **Continue on this device**; no credentials are required for local use.
-2. The schedule starts empty. On **Today**, choose **Add your first medicine**.
-3. Enter the prescribed medicine name, strength, quantity, part of the day, and reminder time. Instructions are optional.
-4. Add more medicines to the same section if needed; they share its reminder time.
-5. Use **Today** to review the schedule and matching compartment label.
-6. On **Schedule**, edit/remove entries or choose **Edit reminder times**.
-7. **History** stays empty until real box events are supplied by a connected backend. There are no simulation controls or invented readings.
+1. Choose **Create an account** on the patient sign-in page.
+2. Enter your name, email, a password of at least 12 characters, and your actual schedule timezone. No email is sent by the current implementation.
+3. Create your account; you are signed in to an empty schedule stored in PostgreSQL.
+4. Add the medicines, quantities, instructions, and times from your prescription.
+5. Sign out and back in, or reload, to verify persistence.
 
-Local schedules are saved only in this browser. In-app medicine reminders appear at the scheduled time while the dashboard is visible and focused, usually within five seconds. Hardware reminders and box history are not connected. This frontend does not operate the physical buzzer or send SMS/email. The box cannot verify which medicine was selected or taken.
+Development setup enables registration with `ALLOW_REGISTRATION=true`. Operators can disable new signups by setting it to `false` in `.env` and restarting the API. Existing accounts can still sign in. Accounts and schedules are isolated per patient.
 
-To test the popup, add a medicine with a reminder time a minute or two ahead in the schedule timezone shown on Today. Keep the dashboard tab visible and focused when that time arrives. The popup shows the medicines for that slot. **View medicines** or **Dismiss reminder** acknowledges only the reminder; **Remind me in 5 minutes** snoozes it. None of these actions records medicine intake. Browser dismissal/snooze choices survive reloads for the same dated reminder. The app does not notify while closed, while signed out, or while its tab/window is inactive. Returning during the follow-up window (20 minutes by default) may display a pending reminder; old reminders are not replayed hours later.
+## Test a medicine popup
 
-Live patient accounts must be created/provisioned by the backend; there are no built-in accounts or default passwords. Live mode has no on-device bypass. The **Sign out** button invalidates the server session when the backend is connected; local **Exit** simply closes the on-device view and is not a security lock.
+Set a medicine's reminder time a minute or two ahead in the timezone shown on Today. Keep the dashboard visible and focused. The popup should appear within about five seconds of the scheduled time.
 
-Previous prototype/sample records are not loaded into the new app. Their localStorage keys are left untouched; no existing browser data is deleted automatically.
+- **View medicines** opens that part of the day.
+- **Remind me in 5 minutes** snoozes it.
+- **Dismiss reminder** suppresses that dated slot/time reminder.
 
-## 4. Stop and restart
+These actions do not record intake or fabricate box events. Reminders do not run while signed out, the tab is inactive, or the browser is closed. Physical alarms run on the ESP32 after hardware integration. Pending reminders may appear on returning within the follow-up window; old reminders are not replayed hours later.
 
-Press **Ctrl+C** in the terminal to stop Vite.
+History stays empty until an authenticated device sends real events. Developer protocol tests use temporary fixtures; the application never seeds those records.
 
-Next time, open a terminal in the cloned `IOT-project` folder and run:
+## Stop, restart, and update
+
+Stop the web/API processes with **Ctrl+C**. The PostgreSQL container and named volume retain data.
 
 ```sh
-npm run dev -- --port 5173
+docker compose up -d --wait db
+npm run dev
 ```
 
-## 5. Get updates
-
-If you have not made local source changes:
+For an update:
 
 ```sh
 git pull --ff-only origin main
 npm ci
-npm run dev -- --port 5173
+npm run setup
+docker compose up -d --wait db
+npm run db:migrate
+npm run dev
 ```
 
-Stop the existing dev server before running these commands. If Git reports local changes, preserve them before pulling; do not discard them blindly.
+Stop PostgreSQL with `docker compose stop db` if desired. **Do not use `docker compose down -v` as routine shutdown; it deletes the database volume.** Preserve `.env` alongside database backups so the configured credentials remain consistent.
 
-## 6. Optional checks
+## Checks and recovery
 
 ```sh
 npm test
+npm run test:server
 npm run build
 ```
 
-To serve the production build locally:
+Server tests use real PostgreSQL in a temporary isolated schema and remove it afterward. They require database access and schema-creation permission; never run them against a production instance. `npm run db:migrate` is repeatable and refuses changed, already-applied migration files.
+
+For a forgotten password, the operator with database access can run:
 
 ```sh
-npm run preview -- --port 4173
+npm run account:reset
 ```
 
-Open http://localhost:4173. Stop this server with Ctrl+C too.
+It prompts for email and a hidden new password, changes the password hash, and invalidates existing sessions. There is no email-based recovery flow yet.
 
-## 7. Troubleshooting
-
-| Problem | What to do |
+| Problem | Action |
 | --- | --- |
-| `node`, `npm`, or `git` is not recognized | Install the missing prerequisite and reopen the terminal |
-| PowerShell blocks `npm.ps1` | Use `npm.cmd ci` and `npm.cmd run dev -- --port 5173`, or use Command Prompt; no policy change is needed |
-| Port 5173 is occupied | Use the URL Vite prints, or run `npm run dev -- --port 5175` |
-| Workspace unavailable / backend error | Remove an unintended `.env.local` live-mode setting or set `VITE_DATA_MODE=local`, then restart Vite |
-| Need to clear your local schedule | Back up the information first, then remove only `smartmed-personal-workspace-v1` from this site's browser localStorage and reload. This deletes your locally entered schedule. |
-| `npm ci` fails | Confirm Node is 22 or later and the package registry is reachable; retain the error output for diagnosis |
+| Docker/database unavailable | Start Docker, then `docker compose up -d --wait db` |
+| PostgreSQL authentication fails | Check that `.env` matches the existing database volume; changing its password does not change an existing PostgreSQL role |
+| Account creation link absent | Verify `ALLOW_REGISTRATION=true`, API health, and `VITE_DATA_MODE=live`, then restart |
+| CSRF/origin error | Open exactly `http://localhost:5173`; verify `APP_ORIGIN` and refresh the sign-in page |
+| Port already in use | Stop the old app. Changing ports requires updating the frontend proxy and `APP_ORIGIN` consistently |
+| PowerShell blocks `npm.ps1` | Use `npm.cmd` in place of `npm`, or Command Prompt; no execution-policy change is needed |
+| Database schema unavailable | Run `npm run db:migrate` before starting the API |
+| Old local data is missing | It remains in the old browser storage; the real account starts separately and does not silently import it |
 
-## 8. Connecting real hardware later
+## Production startup
 
-See [02_MICROCONTROLLER_INTEGRATION.md](02_MICROCONTROLLER_INTEGRATION.md). Set up the backend before switching to live mode. Never place ESP32 credentials or Wi-Fi passwords in browser variables.
+Build with `npm run build`. Set `NODE_ENV=production`, a real HTTPS `APP_ORIGIN`, `HOST=0.0.0.0`, `PORT`, and the production `DATABASE_URL` through your deployment's secret settings; then run migrations and `npm start`. Express serves the built frontend and API on one origin. The runtime refuses a non-HTTPS production origin. Use a trusted reverse proxy for TLS and set `TRUST_PROXY=1` only when that proxy is actually present.
+
+A multi-stage `Dockerfile` is included. On a corporate/intercepting build proxy, forward its supported proxy settings and supply its trusted PEM CA with BuildKit `--secret id=build_ca,src=PATH_TO_TRUSTED_CA`; never disable TLS checks. If BuildKit cannot resolve the configured proxy hostname, configure the builder DNS/host mapping for that existing proxy. Build with `docker build -t smartmed .`; provide runtime settings securely and a PostgreSQL host reachable from the container. `localhost` inside a container is not your laptop's PostgreSQL service. Run `npm run db:migrate` in the configured runtime before starting an upgraded application.
+
+Use a dedicated least-privilege database application role, run migrations with the required migration privileges, and configure database backups, restricted network exposure, verified database TLS when applicable, and deployment monitoring. No public deployment, email/SMS provider, or physical-device certification is bundled. For hardware setup, continue with [Microcontroller integration](02_MICROCONTROLLER_INTEGRATION.md).

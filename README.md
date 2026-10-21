@@ -7,10 +7,26 @@ A medicine schedule and box-access app for four daily sections—Morning, Aftern
 | Guide | Contents |
 | --- | --- |
 | [1. Run the application](docs/01_RUN_APPLICATION.md) | Laptop prerequisites, clone/install/start commands, updating, checks, and troubleshooting |
-| [2. Integrate the web app with the microcontroller](docs/02_MICROCONTROLLER_INTEGRATION.md) | Backend connection hooks, API payloads, firmware communication, event syncing, and security |
+| [2. Integrate the web app with the microcontroller](docs/02_MICROCONTROLLER_INTEGRATION.md) | Express endpoints, provisioning, API payloads, firmware communication, event syncing, and security |
 | [3. Hardware connections](docs/03_HARDWARE_CONNECTIONS.md) | Parts, ESP32 pins, sensor voltage protection, LEDs, buzzer, optional clock, and assembly checks |
-| [4. System architecture](docs/04_SYSTEM_ARCHITECTURE.md) | System diagram, responsibilities, data flow, proposed data model, and implementation status |
+| [4. System architecture](docs/04_SYSTEM_ARCHITECTURE.md) | System diagram, responsibilities, data flow, database tables, and implementation status |
 
-The app starts empty. Local mode saves only user-entered schedules in the current browser; real box history and automatic hardware reminders require backend and firmware integration. In-app reminders appear while the dashboard is visible and focused, with dismiss and five-minute snooze controls. They never mark medicine as taken.
+The app now includes **Express and PostgreSQL**, real patient registration/login, persistent prescriptions/history, active-dashboard reminder popups, and authenticated ESP32 APIs. It starts with no users, medicines, or simulated records.
 
-Patient sign-in is wired to server-verified cookie sessions in live mode. Authentication endpoints and the planned PostgreSQL backend still require implementation. Local use has an explicit **Continue on this device** option; it does not authenticate a patient or accept local passwords as proof of identity. Opening the shared lid does not verify medicine selection or intake.
+## Run the full app
+
+Install Node.js 22+, Git, and Docker, then:
+
+```sh
+npm ci
+npm run setup
+docker compose up -d --wait db
+npm run db:migrate
+npm run dev
+```
+
+Open **http://localhost:5173** and choose **Create an account**. Full clone/update instructions are in guide 1. Setup generates private database credentials; never commit `.env` or the firmware's `secrets.h`.
+
+Checks: `npm test`, `npm run test:server` (requires PostgreSQL), and `npm run build`.
+
+An ESP32 starter and provisioning/recovery tools are included. Firmware compilation is currently unverified because the cloud network blocks PlatformIO registry downloads; physical wiring/calibration/testing is still required. No public deployment or email/SMS provider is configured. The one shared lid cannot verify which medicine was selected or taken.

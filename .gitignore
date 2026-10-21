@@ -147,3 +147,7 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Device provisioning and PlatformIO output
+firmware/SmartMed/include/secrets.h
+firmware/SmartMed/.pio/

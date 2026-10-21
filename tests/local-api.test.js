@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {STORAGE_KEY} from '../src/model.js';
 const entries = new Map([['smartmed-shared-lid-v1', JSON.stringify({medicines:[{name:'Old sample data'}]})]]);
 Object.defineProperty(globalThis,'localStorage',{value:{getItem:key=>entries.get(key)??null,setItem:(key,value)=>entries.set(key,value)},configurable:true});
+process.env.VITE_DATA_MODE='local';
 const {smartmed,DATA_MODE} = await import('../src/api/smartmed.js');
 test('local mode ignores prior prototype samples and exposes no event simulation', async () => {
   assert.equal(DATA_MODE,'local');

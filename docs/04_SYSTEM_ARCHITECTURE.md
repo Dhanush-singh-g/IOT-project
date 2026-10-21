@@ -8,31 +8,31 @@ At each scheduled time, the matching LED blinks and one external buzzer sounds. 
 
 **A box opening is an access record.** It cannot prove which section was used, which medicine was selected, how many pills were removed, or whether medicine was swallowed. The software does not prescribe or recommend medicines. Refilling is manual and daily.
 
-## 2. Current implementation versus planned system
+## 2. Implementation status
 
 | Component | Current status |
 | --- | --- |
-| React/Vite frontend | Implemented: patient sign-in screen, Today, Schedule, History |
-| Local schedule storage | Implemented: user-entered records in the current browser only |
-| Live API adapter | Implemented connection hooks; requires the backend described in the integration guide |
-| Spring Boot backend and PostgreSQL | Planned; not included in this repository |
-| Patient sign-in integration | Frontend session/login/logout adapter implemented; server authentication and shared patient authorization still required |
-| Active-dashboard popups | Implemented: visible/focused view, dated reminders, dismiss and five-minute snooze |
-| ESP32 firmware and physical hardware | Planned; wiring is a proposed build, not physically verified |
-| Local hardware reminders and event uploads | Require the backend, firmware, and hardware implementation |
-| SMS/email alerts | Optional future work; not implemented or needed for the first end-to-end version |
+| React/Vite frontend | Implemented: account creation/sign-in, Today, Schedule, paginated History |
+| Express backend and PostgreSQL | Implemented: migrations, patient-scoped APIs, transactional writes, persistent sessions and history |
+| Patient authentication | Implemented: salted scrypt password hashes, HttpOnly cookies, CSRF/origin checks, throttled login, logout and expiry |
+| Active-dashboard popups | Implemented: focused/visible dashboard, real schedule, dismiss and five-minute snooze |
+| Device API and provisioning | Implemented: per-box credentials, calibration, configuration/versioned reminders, idempotent event ingestion, heartbeat |
+| ESP32 firmware starter | Included under `firmware/SmartMed`; cloud compilation blocked by PlatformIO registry policy; physical testing/calibration outstanding |
+| Docker/dev setup | PostgreSQL Compose service, generated private settings, migrations, API/frontend development command, runtime Dockerfile |
+| Separate caregiver delegation | Not implemented; the current account/workspace belongs to one patient |
+| Email/SMS alerts and emailed recovery | Not implemented; use the in-app reminder and operator password-reset tool |
 
-The frontend starts empty. It does not insert sample patients, sample prescriptions, sensor readings, or opening events. Local mode cannot create physical box history or operate a buzzer. Its explicit on-device entry is not authentication. In-app popups use the actual entered schedule while the page is active; they do not confirm intake. A successful frontend build does not mean the complete connected system is deployed.
+The application creates no default patients, prescriptions, or opening events. Live mode is the default and uses PostgreSQL. Explicit `VITE_DATA_MODE=local` remains an optional browser-only schedule, without authentication or device events. In-app popups do not confirm intake. Backend tests and protocol fixtures cannot certify physical sensing or medicine safety.
 
 ## 3. Architecture diagram
 
-The diagram below is the intended connected deployment. The browser-local path works today; the backend/device path still needs implementation.
+The web/API/database path is implemented and tested. The hardware path requires provisioning, verified firmware compilation, and physical calibration/testing.
 
 ```mermaid
 flowchart LR
     U[Patient or caregiver] --> W[React web app]
     W -. Local mode only .-> L[(Browser storage)]
-    W <-->|HTTPS REST: live mode| B[Spring Boot backend]
+    W <-->|HTTPS REST: live mode| B[Express backend]
     B <--> D[(PostgreSQL)]
     E[ESP32] <-->|Wi-Fi + HTTPS REST| B
     S[One shared-lid ultrasonic sensor] --> E
@@ -83,16 +83,18 @@ Opening outside a reminder window remains an ordinary box event. A lid already o
 
 ## 6. Minimal backend data model
 
-These are proposed server-side entities, not database tables already present in this frontend repository.
+Implemented tables are created through checksum-tracked SQL migrations in `server/migrations/`.
 
 | Entity | Key information |
 | --- | --- |
-| User and care assignment | Authenticated identity and authorized patient/workspace |
-| Daily slot | Patient/workspace, one of four fixed slot IDs, configured local time or null |
-| Medicine entry | Slot, name, strength, quantity, instructions; entered from prescription |
-| Reminder instance | Stable ID, slot, schedule version, UTC scheduled/window-end timestamps |
-| Device | Assigned workspace, credential binding, last heartbeat, configuration/schedule versions |
-| Box event | Unique device/event identity, OPENED/CLOSED type, occurrence/receipt timestamps, sequence, optional immutable reminder context |
+| `patients` | Email, password hash, display name, timezone, and current schedule version |
+| `sessions`, `auth_limits` | Hashed opaque sessions, CSRF token/expiry, durable authentication rate counters |
+| `slots` | Patient/workspace, one of four fixed slot IDs, configured local time or null |
+| `medicines` | Slot, name, strength, quantity, instructions; entered from prescription |
+| `schedule_versions` | Immutable prescription snapshots with validity intervals for late/offline event association |
+| `reminders` | Stable ID, slot, schedule version, UTC scheduled/window-end timestamps |
+| `devices` | Assigned workspace, credential binding, last heartbeat, configuration/schedule versions |
+| `box_events` | Unique device/event identity, OPENED/CLOSED type, occurrence/receipt timestamps, sequence, optional immutable reminder context |
 
 Keep recurring schedules separate from dated access records. Yesterday's event must not mark today's reminder as accessed. Preserve historical context after a medicine is edited or removed. Enforce a unique `(device_id, event_id)` constraint to make upload retries safe.
 
@@ -109,17 +111,19 @@ Keep recurring schedules separate from dated access records. Yesterday's event m
 
 ## 8. Deployment boundary
 
-For a real deployment, serve the frontend and API through HTTPS, preferably on the same origin. Complete server-side patient/caregiver authentication, patient authorization, CSRF/session validation, device provisioning, TLS certificate validation, and database persistence before use with real patient information.
+For a real deployment, serve the frontend and API through HTTPS, preferably on the same origin. The Express implementation includes patient authentication/authorization, CSRF/session checks, durable storage, and device provisioning. Complete the deployment-specific TLS configuration, database backups, access review, and physical acceptance tests before real use. Separate caregiver roles and email/SMS providers are outside the implemented scope.
 
 Device credentials belong in controlled firmware/backend provisioning, never in browser variables, Git, or URLs. The web app should continue to expose only routine management and box history; calibration and firmware diagnostics belong in protected operator tooling.
 
-## 9. Build order
+## 9. Bring-up order
 
-1. Verify one physical lid sensor can distinguish closed/open states in the actual enclosure.
-2. Implement backend event ingestion and history storage.
-3. Complete **physical lid opening → committed backend event → web history**.
-4. Connect schedule editing, dated reminders, the four LEDs, and the shared buzzer.
-5. Verify offline operation, event retries, restarts, and schedule updates.
-6. Complete authentication, authorization, and secure deployment.
+1. Run PostgreSQL, migrations, Express, and React using the application guide.
+2. Create a real patient account and enter the prescribed schedule.
+3. Test the shared-lid sensor in the actual enclosure before choosing thresholds.
+4. Provision a box credential, save measured calibration, and configure the firmware's HTTPS trust and network settings.
+5. Compile/upload the starter and verify **physical lid opening → committed PostgreSQL event → web history**.
+6. Verify local LED/buzzer reminders, offline recovery, power loss, queue limits, schedule updates, and revoked credentials.
 
-Detailed steps are in [Microcontroller integration](02_MICROCONTROLLER_INTEGRATION.md), physical connections in [Hardware connections](03_HARDWARE_CONNECTIONS.md), and laptop commands in [Run the application](01_RUN_APPLICATION.md).
+Automated backend checks already exercise patient isolation, CSRF/origin checks, real session login/logout, atomic schedules, stable reminder IDs, token rotation/revocation, duplicate/conflicting batches, historical prescription context, and pagination against PostgreSQL. Browser checks exercise real account/schedule/history persistence. Physical hardware acceptance remains separate.
+
+Detailed steps: [Microcontroller integration](02_MICROCONTROLLER_INTEGRATION.md), [Hardware connections](03_HARDWARE_CONNECTIONS.md), and [Run the application](01_RUN_APPLICATION.md).
