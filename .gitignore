@@ -66,8 +66,6 @@ web_modules/
 .yarn-integrity
 
 # dotenv environment variable files
-.env
-.env.*
 !.env.example
 
 # parcel-bundler cache (https://parceljs.org/)
@@ -151,3 +149,4 @@ vite.config.ts.timestamp-*
 # Device provisioning and PlatformIO output
 firmware/SmartMed/include/secrets.h
 firmware/SmartMed/.pio/
+config.bat

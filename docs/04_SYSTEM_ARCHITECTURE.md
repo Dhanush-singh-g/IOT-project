@@ -12,7 +12,7 @@ At each scheduled time, the matching LED blinks and one external buzzer sounds. 
 
 | Component | Current status |
 | --- | --- |
-| React/Vite frontend | Implemented: account creation/sign-in, Today, Schedule, paginated History |
+| React/Vite frontend | Implemented: account creation/sign-in, Today with four visible sections and inline schedule editing, paginated History |
 | Express backend and PostgreSQL | Implemented: migrations, patient-scoped APIs, transactional writes, persistent sessions and history |
 | Patient authentication | Implemented: salted scrypt password hashes, HttpOnly cookies, CSRF/origin checks, throttled login, logout and expiry |
 | Active-dashboard popups | Implemented: focused/visible dashboard, real schedule, dismiss and five-minute snooze |

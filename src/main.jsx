@@ -1,18 +1,16 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {ArrowRight, Bell, Check, ChevronDown, Clock3, Download, History, Moon, Pill, Plus, RefreshCw, Sunrise, Sun, Sunset, Trash2, X} from 'lucide-react';
+import {ArrowRight, Bell, Check, Clock3, Download, History, Pill, Plus, RefreshCw, Trash2, X} from 'lucide-react';
 import {smartmed, DATA_MODE} from './api/smartmed.js';
 import {clockLabel, eventTime, exportCsv, minutes, slotMedicines, validateSlots, zonedParts} from './model.js';
 import PatientAccess from './PatientLogin.jsx';
 import {dueReminder, readDecisions, recordDecision} from './reminders.js';
 import './styles.css';
-const ICONS = {morning: Sunrise, afternoon: Sun, evening: Sunset, night: Moon};
 const LOCAL = DATA_MODE === 'local';
 function App({access}) {
   const [workspace, setWorkspace] = useState(null);
   const [page, setPage] = useState('Today');
   const [now, setNow] = useState(new Date());
-  const [expanded, setExpanded] = useState(null);
   const [modal, setModal] = useState(null);
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -85,8 +83,6 @@ function App({access}) {
   const slots = workspace ? workspace.slots : [];
   const scheduled = slots.filter(s => s.time && slotMedicines(workspace, s.id).length).sort((a,b) => minutes(a.time) - minutes(b.time));
   const currentSlot = scheduled.find(s => today.minute >= minutes(s.time) && today.minute <= minutes(s.time) + workspace.settings.grace);
-  const nextSlot = currentSlot || scheduled.find(s => minutes(s.time) > today.minute);
-  const defaultExpanded = nextSlot?.id || scheduled[0]?.id;
   const connected = !LOCAL && !loadError && workspace?.device?.online === true && Number.isFinite(Date.parse(workspace.device.lastSeen)) && now.getTime() - Date.parse(workspace.device.lastSeen) >= 0 && now.getTime() - Date.parse(workspace.device.lastSeen) < 90000;
   const events = workspace ? [...workspace.events].sort((a,b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt)) : [];
   const hasMedicines = Boolean(workspace?.medicines.length);
@@ -96,28 +92,24 @@ function App({access}) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   return <div className="app">
-    <header className="app-header"><div className="header-inner"><a className="brand" href="#" onClick={e=>{e.preventDefault();setPage('Today');}}><span className="brand-mark"><Pill size={22}/></span>smart<span>med</span></a><nav aria-label="Main navigation">{['Today','Schedule','History'].map(label=><button key={label} aria-current={page===label?'page':undefined} onClick={()=>setPage(label)}>{label}</button>)}</nav><div className="patient-account"><span>{access.user?.displayName || 'On this device'}</span><button disabled={access.logoutBusy} onClick={access.onLogout}>{access.logoutBusy?'Please wait…':access.localAccess?'Exit':'Sign out'}</button></div></div></header>
+    <header className="app-header"><div className="header-inner"><a className="brand" href="#" onClick={e=>{e.preventDefault();setPage('Today');}}><span className="brand-mark"><Pill size={22}/></span>smart<span>med</span></a><nav aria-label="Main navigation">{['Today','History'].map(label=><button key={label} aria-current={page===label?'page':undefined} onClick={()=>setPage(label)}>{label}</button>)}</nav><div className="patient-account"><span>{access.user?.displayName || 'On this device'}</span><button disabled={access.logoutBusy} onClick={access.onLogout}>{access.logoutBusy?'Please wait…':access.localAccess?'Exit':'Sign out'}</button></div></div></header>
     <main>
-      <div className="page-heading"><div><div className="eyebrow">{now.toLocaleDateString('en-US',{timeZone:zone,weekday:'long',month:'long',day:'numeric'})}</div><h1>{page==='Today'?'A simpler medicine routine.':page==='Schedule'?'Your medication schedule.':'Box-opening history.'}</h1><p>{page==='Today'?'See what is scheduled and which section to use.':page==='Schedule'?'Add only the medicines and instructions on your prescription.':'A record of when your medicine box was opened.'}</p></div>{workspace && page==='Schedule' && <button className="primary" onClick={()=>openModal({type:'medicine'})}><Plus size={17}/>Add medicine</button>}</div>
+      <div className="page-heading"><div><div className="eyebrow">{now.toLocaleDateString('en-US',{timeZone:zone,weekday:'long',month:'long',day:'numeric'})}</div><h1>{page==='Today'?"Today’s medicines":'Box-opening history'}</h1><p>{page==='Today'?'Your medicines, organised by time of day.':'A record of when your medicine box was opened.'}</p></div>{workspace && page==='Today' && <button className="primary" onClick={()=>openModal({type:'medicine'})}><Plus size={17}/>Add medicine</button>}</div>
       {access.logoutError && <div className="error-banner" role="alert">{access.logoutError}</div>}
       {loadError && <div className="error-banner" role="alert"><span>{loadError}</span><button onClick={refresh}><RefreshCw size={15}/>Try again</button></div>}
       {!workspace ? <section className="empty-state"><Clock3 size={29}/><h2>{loadError?'Your schedule is unavailable':'Loading your schedule…'}</h2><p>{loadError?'Your saved information has not been replaced. Please try again.':'This will only take a moment.'}</p></section> : <>
         {LOCAL && <div className="storage-notice"><span className="notice-dot"/><span>Saved on this browser only. Reminders appear while you use the app. Box history is not connected.</span></div>}
         {page==='Today' && <>
-          {!hasMedicines ? <section className="welcome-card"><span className="welcome-icon"><Pill size={34}/></span><span className="eyebrow">ONE DAY, FOUR SIMPLE MOMENTS</span><h2>Start with your first medicine.</h2><p>Add your prescribed medicines to Morning, Afternoon, Evening, or Night. Your daily list will appear here.</p><button className="primary" onClick={()=>openModal({type:'medicine'})}><Plus size={17}/>Add your first medicine</button><div className="welcome-slots">{slots.map(s=>{const Icon=ICONS[s.id];return <span key={s.id}><Icon size={18}/>{s.label}</span>;})}</div></section> : <>
-            <section className="next-reminder"><span className="reminder-icon"><Bell size={23}/></span><div><span className="eyebrow">{currentSlot?'SCHEDULED NOW':nextSlot?'NEXT TODAY':'TODAY’S REMINDERS'}</span><h2>{nextSlot?`${nextSlot.label} · ${clockLabel(nextSlot.time)}`:'No more scheduled reminders today'}</h2><p>{nextSlot?'Use the section with the matching label.':'You can still review today’s medicine list below.'}</p></div>{nextSlot && <button className="text-button" onClick={()=>setExpanded(nextSlot.id)}>View medicines <ArrowRight size={16}/></button>}</section>
-            <div className="section-label"><h2>Today’s medicines</h2><span>{zone}</span></div>
-            <div className="day-slots">{slots.map(slot=>{
-              const list=slotMedicines(workspace,slot.id), Icon=ICONS[slot.id];
-              const isOpen=(expanded ?? defaultExpanded)===slot.id;
-              return <section className={'day-slot '+(nextSlot?.id===slot.id?'is-next':'')} key={slot.id}><button className="slot-heading" aria-expanded={isOpen} aria-controls={'slot-'+slot.id} onClick={()=>setExpanded(isOpen?'none':slot.id)}><span className={'slot-icon '+slot.id}><Icon size={22}/></span><div><strong>{slot.label}</strong><span>{list.length?clockLabel(slot.time):'Nothing scheduled'}</span></div><span className="slot-summary">{list.length?`${list.length} medicine${list.length===1?'':'s'}`:''}</span><ChevronDown className={isOpen?'rotated':''} size={18}/></button>{isOpen && <div id={'slot-'+slot.id} className="slot-content">{list.length ? <>{list.map(m=><MedicineRow key={m.id} medicine={m}/>)}<div className="slot-instruction">Use the compartment labelled <strong>{slot.label.toUpperCase()}</strong>.</div></> : <p className="slot-empty">No medicines added for {slot.label.toLowerCase()}.</p>}</div>}</section>;
-            })}</div>
-          </>}
-          <p className="quiet-note">Refill the four sections each day according to the prescription. Opening the box does not confirm medicine intake.</p>
-        </>}
-        {page==='Schedule' && <>
-          <div className="section-label"><h2>Four daily time slots</h2><button className="text-button" onClick={()=>openModal({type:'times'})}><Clock3 size={15}/>Edit reminder times</button></div>
-          <div className="schedule-list">{slots.map(slot=>{const Icon=ICONS[slot.id],list=slotMedicines(workspace,slot.id);return <section className="schedule-slot" key={slot.id}><div className="schedule-slot-heading"><span className={'slot-icon '+slot.id}><Icon size={21}/></span><div><h2>{slot.label}</h2><span>{clockLabel(slot.time)}</span></div><button className="text-button" aria-label={'Add medicine to '+slot.label.toLowerCase()} onClick={()=>openModal({type:'medicine',slotId:slot.id})}><Plus size={16}/><span>Add medicine</span></button></div>{list.map(m=><MedicineRow key={m.id} medicine={m} actions={<><button className="edit-button" aria-label={'Edit '+m.name} onClick={()=>openModal({type:'medicine',medicine:m})}>Edit</button><button className="delete-button" aria-label={'Remove '+m.name} onClick={()=>openModal({type:'remove',medicine:m})}><Trash2 size={15}/></button></>}/>)}{!list.length && <p className="slot-empty">No medicines added.</p>}</section>;})}</div><p className="quiet-note">Medicines in the same time slot share a reminder time. Enter quantities and instructions exactly as prescribed.</p>
+          {!hasMedicines && <p className="getting-started">Add your first medicine using <strong>Add medicine</strong> or the + button on a section. Use the details from your prescription.</p>}
+          <div className="section-label routine-toolbar"><span>Times shown in {zone}</span><button className="text-button" onClick={()=>openModal({type:'times'})}><Clock3 size={15}/>Edit reminder times</button></div>
+          <div className="day-slots">{slots.map(slot=>{
+            const list=slotMedicines(workspace,slot.id), isDue=currentSlot?.id===slot.id;
+            return <section id={'slot-'+slot.id} aria-labelledby={'heading-'+slot.id} className={'day-slot '+(isDue?'is-due':'')} key={slot.id}>
+              <div className="slot-heading"><div><h2 id={'heading-'+slot.id}>{slot.label}</h2><span>{list.length?clockLabel(slot.time):'No medicines scheduled'}</span></div><div className="slot-heading-actions">{isDue && <span className="due-label">Reminder now</span>}<button className="add-to-slot" aria-label={'Add medicine to '+slot.label.toLowerCase()} onClick={()=>openModal({type:'medicine',slotId:slot.id})}><Plus size={19}/></button></div></div>
+              <div className="slot-content">{list.length?list.map(m=><MedicineRow key={m.id} medicine={m} actions={<><button className="edit-button" aria-label={'Edit '+m.name} onClick={()=>openModal({type:'medicine',medicine:m})}>Edit</button><button className="delete-button" aria-label={'Remove '+m.name} onClick={()=>openModal({type:'remove',medicine:m})}><Trash2 size={15}/></button></>}/>):<p className="slot-empty">Nothing to take in this section.</p>}</div>
+            </section>;
+          })}</div>
+          <p className="quiet-note">Use the matching labelled section in your box. Refill daily as prescribed. Box openings do not confirm medicine intake.</p>
         </>}
         {page==='History' && <>
           <div className="history-header"><span className="connection-label"><span className={connected?'connected-dot':'notice-dot'}/>{connected?'Box connected':'Box not connected'}{workspace.device?.lastSeen && <small>Last update {eventTime(workspace.device.lastSeen,zone)}</small>}</span>{events.length>0 && <button className="secondary" onClick={download}><Download size={16}/>Export</button>}</div>
@@ -135,12 +127,13 @@ function App({access}) {
       {saveError && <p className="form-error" role="alert">{saveError}</p>}
     </Modal>}
     {reminder && <Modal busy={false} onClose={() => decideReminder()} title="Medicine reminder">
-      <div className="reminder-dialog"><span className="reminder-bell"><Bell size={29}/></span><span className="eyebrow">YOUR MEDICINE REMINDER</span><h2>Time for your {reminder.slot.label.toLowerCase()} medicines.</h2><p>Scheduled for {clockLabel(reminder.slot.time)}. Use the section labelled <strong>{reminder.slot.label.toUpperCase()}</strong>.</p><div className="reminder-medicines">{reminder.medicines.map(m => <MedicineRow key={m.id} medicine={m}/>)}</div><p className="reminder-note">Follow your prescribed instructions. Dismissing this reminder does not record medicine intake.</p><div className="reminder-actions"><button className="primary" onClick={() => {setPage('Today'); setExpanded(reminder.slot.id); decideReminder();}}>View medicines<ArrowRight size={16}/></button><button className="secondary" onClick={() => decideReminder(true)}><Clock3 size={15}/>Remind me in 5 minutes</button><button className="text-button" onClick={() => decideReminder()}>Dismiss reminder</button></div></div>
+      <div className="reminder-dialog"><span className="reminder-bell"><Bell size={29}/></span><span className="eyebrow">YOUR MEDICINE REMINDER</span><h2>Time for your {reminder.slot.label.toLowerCase()} medicines.</h2><p>Scheduled for {clockLabel(reminder.slot.time)}. Use the section labelled <strong>{reminder.slot.label.toUpperCase()}</strong>.</p><div className="reminder-medicines">{reminder.medicines.map(m => <MedicineRow key={m.id} medicine={m}/>)}</div><p className="reminder-note">Follow your prescribed instructions. Dismissing this reminder does not record medicine intake.</p><div className="reminder-actions"><button className="primary" onClick={() => {setPage('Today'); decideReminder(); requestAnimationFrame(()=>document.getElementById('slot-'+reminder.slot.id)?.scrollIntoView({block:'center'}));}}>View medicines<ArrowRight size={16}/></button><button className="secondary" onClick={() => decideReminder(true)}><Clock3 size={15}/>Remind me in 5 minutes</button><button className="text-button" onClick={() => decideReminder()}>Dismiss reminder</button></div></div>
     </Modal>}
     {toast && <div className="toast" role="status"><Check size={17}/>{toast}<button aria-label="Dismiss message" onClick={()=>setToast('')}><X size={15}/></button></div>}
   </div>;
 }
-function MedicineRow({medicine:m,actions}) {return <div className="medicine-row"><span className="pill-icon"><Pill size={20}/></span><div className="medicine-details"><strong>{m.name}</strong><span>{m.strength}{m.instructions?' · '+m.instructions:''}</span></div><span className="quantity">{m.quantity}</span>{actions && <div className="medicine-actions">{actions}</div>}</div>;}
+function MedicineRow({medicine:m,actions}) {return <div className="medicine-row"><div className="medicine-details"><strong>{m.name}</strong><span>{m.strength}</span><span className="medicine-dose">Quantity: {m.quantity}</span>{m.instructions && <p className="medicine-instructions">{m.instructions}</p>}</div>{actions && <div className="medicine-actions">{actions}</div>}</div>;}
+
 function Modal({children,title,busy,onClose}) {
   const ref=useRef();
   useEffect(()=>{
