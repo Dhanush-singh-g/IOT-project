@@ -31,7 +31,7 @@ async function request(path, {method = 'GET', body} = {}) {
 }
 export const smartmed = {
   async load() {
-    // CONNECTION PLACEHOLDER: implement the workspace endpoint described in docs/ESP32_CONNECTION.md.
+    // CONNECTION PLACEHOLDER: implement the workspace endpoint described in docs/02_MICROCONTROLLER_INTEGRATION.md.
     // Connection failures never insert sample records.
     return DATA_MODE === 'local' ? readLocal() : validateWorkspace(await request('/workspace'));
   },

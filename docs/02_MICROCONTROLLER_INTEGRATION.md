@@ -1,8 +1,8 @@
-# ESP32 and backend integration — developer guide
+# 2. Integrate the web app with the microcontroller
 
-Hardware setup is intentionally kept outside the user interface. The app has three pages: Today, Schedule, and History. It contains no sample patients, sample medicines, device simulator, or invented box readings.
+For the complete component design, see [System architecture](04_SYSTEM_ARCHITECTURE.md). For physical wiring, see [Hardware connections](03_HARDWARE_CONNECTIONS.md). Hardware setup is intentionally kept outside the user interface. The app has three pages: Today, Schedule, and History. It contains no sample patients, sample medicines, device simulator, or invented box readings.
 
-## 1. Architecture and measurement limits
+## 1. Connection overview
 
 ```text
 React frontend <-- HTTPS --> Spring Boot + MySQL <-- HTTPS / Wi-Fi --> ESP32

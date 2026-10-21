@@ -1,10 +1,10 @@
-# SmartMed hardware wiring: one shared lid
+# 3. Hardware connections
 
 This proposed bench-build plan matches the current dashboard: **four labelled time-slot sections under one lid, one ultrasonic sensor for the whole box, four LEDs, and one external buzzer**. It has not been physically tested.
 
 Assumptions: a classic **ESP32-WROOM-32 development board** exposing the GPIOs below, and one **5 V HC-SR04-style module with VCC/TRIG/ECHO/GND pins**. Do not reuse this plan unchanged for ESP32-C3/S3/WROVER boards or other sensors. Confirm actual board and module datasheets before assembly.
 
-The sensor cannot identify which section was accessed. That limitation is reflected throughout the dashboard. For firmware/API details, see [ESP32_CONNECTION.md](ESP32_CONNECTION.md).
+The sensor cannot identify which section was accessed. That limitation is reflected throughout the dashboard. For firmware/API details, see [02_MICROCONTROLLER_INTEGRATION.md](02_MICROCONTROLLER_INTEGRATION.md).
 
 ## 1. Components
 
@@ -166,7 +166,7 @@ If one ultrasonic sensor cannot reliably distinguish the lid states in the chose
 6. Add the buzzer driver; verify silent startup and one shared alarm.
 7. Add the clock; verify backup timekeeping across power loss.
 8. Check stable power during Wi-Fi transmission and buzzer operation. Test with the final USB cable.
-9. Implement opening/closing events and backend sync using [ESP32_CONNECTION.md](ESP32_CONNECTION.md).
+9. Implement opening/closing events and backend sync using [02_MICROCONTROLLER_INTEGRATION.md](02_MICROCONTROLLER_INTEGRATION.md).
 10. Replace temporary jumpers with secure, insulated connections before enclosing.
 
 Final acceptance: the right time-slot LED blinks and the one buzzer sounds; opening the shared lid records **Box opened**; the dashboard continues to say medicine selection/intake are **not verified**. Test power loss, offline recovery, a lid already open at startup, and opening outside a reminder window.

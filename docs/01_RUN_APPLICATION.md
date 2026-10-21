@@ -1,4 +1,4 @@
-# Run SmartMed on your laptop
+# 1. Run the application
 
 These commands work in Windows PowerShell, macOS Terminal, and Linux terminals.
 
@@ -94,4 +94,4 @@ Open http://localhost:4173. Stop this server with Ctrl+C too.
 
 ## 8. Connecting real hardware later
 
-See [ESP32_CONNECTION.md](ESP32_CONNECTION.md). Set up the backend before switching to live mode. Never place ESP32 credentials or Wi-Fi passwords in browser variables.
+See [02_MICROCONTROLLER_INTEGRATION.md](02_MICROCONTROLLER_INTEGRATION.md). Set up the backend before switching to live mode. Never place ESP32 credentials or Wi-Fi passwords in browser variables.
