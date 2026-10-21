@@ -3,10 +3,12 @@ import {createRoot} from 'react-dom/client';
 import {ArrowRight, Bell, Check, ChevronDown, Clock3, Download, History, Moon, Pill, Plus, RefreshCw, Sunrise, Sun, Sunset, Trash2, X} from 'lucide-react';
 import {smartmed, DATA_MODE} from './api/smartmed.js';
 import {clockLabel, eventTime, exportCsv, minutes, slotMedicines, validateSlots, zonedParts} from './model.js';
+import PatientAccess from './PatientLogin.jsx';
+import {dueReminder, readDecisions, recordDecision} from './reminders.js';
 import './styles.css';
 const ICONS = {morning: Sunrise, afternoon: Sun, evening: Sunset, night: Moon};
 const LOCAL = DATA_MODE === 'local';
-function App() {
+function App({access}) {
   const [workspace, setWorkspace] = useState(null);
   const [page, setPage] = useState('Today');
   const [now, setNow] = useState(new Date());
@@ -16,6 +18,9 @@ function App() {
   const [loadError, setLoadError] = useState('');
   const [saveError, setSaveError] = useState('');
   const [toast, setToast] = useState('');
+  const decisionKey = 'smartmed-reminders-v1:' + (access.user?.id || 'on-device');
+  const [decisions, setDecisions] = useState(() => readDecisions(localStorage, decisionKey));
+  const [active, setActive] = useState(() => document.visibilityState === 'visible' && document.hasFocus());
   const generation = useRef(0), writing = useRef(false), loading = useRef(false), timer = useRef();
   async function refresh() {
     if (writing.current || loading.current) return;
@@ -27,10 +32,24 @@ function App() {
   }
   useEffect(() => {
     refresh();
-    const clock = setInterval(() => setNow(new Date()), 15000);
+    const clock = setInterval(() => setNow(new Date()), 5000);
     const polling = LOCAL ? null : setInterval(refresh, 10000);
     return () => {clearInterval(clock); clearInterval(polling); clearTimeout(timer.current);};
   }, []);
+  useEffect(() => {
+    function updateActivity() {setActive(document.visibilityState === 'visible' && document.hasFocus()); setNow(new Date());}
+    function updateDecisions(e) {if (e.key === decisionKey) setDecisions(readDecisions(localStorage, decisionKey));}
+    window.addEventListener('focus', updateActivity); window.addEventListener('blur', updateActivity);
+    document.addEventListener('visibilitychange', updateActivity); window.addEventListener('storage', updateDecisions);
+    return () => {window.removeEventListener('focus', updateActivity); window.removeEventListener('blur', updateActivity); document.removeEventListener('visibilitychange', updateActivity); window.removeEventListener('storage', updateDecisions);};
+  }, [decisionKey]);
+  const reminder = active && !modal && !loadError ? dueReminder(workspace, now, decisions) : null;
+  function decideReminder(snooze = false) {
+    if (!reminder) return;
+    const next = recordDecision(decisions, reminder.key, snooze ? {snoozedUntil: Date.now() + 5*60000} : {dismissed: true});
+    setDecisions(next);
+    try {localStorage.setItem(decisionKey, JSON.stringify(next));} catch { /* In-memory decisions still prevent repeats in this session. */ }
+  }
   function notify(message) {setToast(message); clearTimeout(timer.current); timer.current = setTimeout(() => setToast(''), 5000);}
   function openModal(value) {setSaveError(''); setModal(value);}
   async function mutate(action, message) {
@@ -59,12 +78,13 @@ function App() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   return <div className="app">
-    <header className="app-header"><div className="header-inner"><a className="brand" href="#" onClick={e=>{e.preventDefault();setPage('Today');}}><span className="brand-mark"><Pill size={22}/></span>smart<span>med</span></a><nav aria-label="Main navigation">{['Today','Schedule','History'].map(label=><button key={label} aria-current={page===label?'page':undefined} onClick={()=>setPage(label)}>{label}</button>)}</nav><span className="header-tag">Your daily routine</span></div></header>
+    <header className="app-header"><div className="header-inner"><a className="brand" href="#" onClick={e=>{e.preventDefault();setPage('Today');}}><span className="brand-mark"><Pill size={22}/></span>smart<span>med</span></a><nav aria-label="Main navigation">{['Today','Schedule','History'].map(label=><button key={label} aria-current={page===label?'page':undefined} onClick={()=>setPage(label)}>{label}</button>)}</nav><div className="patient-account"><span>{access.user?.displayName || 'On this device'}</span><button disabled={access.logoutBusy} onClick={access.onLogout}>{access.logoutBusy?'Please wait…':access.localAccess?'Exit':'Sign out'}</button></div></div></header>
     <main>
       <div className="page-heading"><div><div className="eyebrow">{now.toLocaleDateString('en-US',{timeZone:zone,weekday:'long',month:'long',day:'numeric'})}</div><h1>{page==='Today'?'A simpler medicine routine.':page==='Schedule'?'Your medication schedule.':'Box-opening history.'}</h1><p>{page==='Today'?'See what is scheduled and which section to use.':page==='Schedule'?'Add only the medicines and instructions on your prescription.':'A record of when your medicine box was opened.'}</p></div>{workspace && page==='Schedule' && <button className="primary" onClick={()=>openModal({type:'medicine'})}><Plus size={17}/>Add medicine</button>}</div>
+      {access.logoutError && <div className="error-banner" role="alert">{access.logoutError}</div>}
       {loadError && <div className="error-banner" role="alert"><span>{loadError}</span><button onClick={refresh}><RefreshCw size={15}/>Try again</button></div>}
       {!workspace ? <section className="empty-state"><Clock3 size={29}/><h2>{loadError?'Your schedule is unavailable':'Loading your schedule…'}</h2><p>{loadError?'Your saved information has not been replaced. Please try again.':'This will only take a moment.'}</p></section> : <>
-        {LOCAL && <div className="storage-notice"><span className="notice-dot"/><span>Saved on this browser only. Automatic reminders and box history are not connected.</span></div>}
+        {LOCAL && <div className="storage-notice"><span className="notice-dot"/><span>Saved on this browser only. Reminders appear while you use the app. Box history is not connected.</span></div>}
         {page==='Today' && <>
           {!hasMedicines ? <section className="welcome-card"><span className="welcome-icon"><Pill size={34}/></span><span className="eyebrow">ONE DAY, FOUR SIMPLE MOMENTS</span><h2>Start with your first medicine.</h2><p>Add your prescribed medicines to Morning, Afternoon, Evening, or Night. Your daily list will appear here.</p><button className="primary" onClick={()=>openModal({type:'medicine'})}><Plus size={17}/>Add your first medicine</button><div className="welcome-slots">{slots.map(s=>{const Icon=ICONS[s.id];return <span key={s.id}><Icon size={18}/>{s.label}</span>;})}</div></section> : <>
             <section className="next-reminder"><span className="reminder-icon"><Bell size={23}/></span><div><span className="eyebrow">{currentSlot?'SCHEDULED NOW':nextSlot?'NEXT TODAY':'TODAY’S REMINDERS'}</span><h2>{nextSlot?`${nextSlot.label} · ${clockLabel(nextSlot.time)}`:'No more scheduled reminders today'}</h2><p>{nextSlot?'Use the section with the matching label.':'You can still review today’s medicine list below.'}</p></div>{nextSlot && <button className="text-button" onClick={()=>setExpanded(nextSlot.id)}>View medicines <ArrowRight size={16}/></button>}</section>
@@ -94,6 +114,9 @@ function App() {
       {modal.type==='times' && <TimesForm workspace={workspace} busy={busy} onCancel={()=>setModal(null)} onSave={value=>mutate(()=>smartmed.saveSlots(value),'Reminder times saved')}/>}
       {modal.type==='remove' && <><h2>Remove {modal.medicine.name}?</h2><p>It will be removed from your daily schedule. Existing box history will be kept.</p><div className="form-footer"><button className="secondary" disabled={busy} onClick={()=>setModal(null)}>Keep medicine</button><button className="danger" disabled={busy} onClick={()=>mutate(()=>smartmed.removeMedicine(modal.medicine.id),'Medicine removed')}>{busy?'Removing…':'Remove medicine'}</button></div></>}
       {saveError && <p className="form-error" role="alert">{saveError}</p>}
+    </Modal>}
+    {reminder && <Modal busy={false} onClose={() => decideReminder()} title="Medicine reminder">
+      <div className="reminder-dialog"><span className="reminder-bell"><Bell size={29}/></span><span className="eyebrow">YOUR MEDICINE REMINDER</span><h2>Time for your {reminder.slot.label.toLowerCase()} medicines.</h2><p>Scheduled for {clockLabel(reminder.slot.time)}. Use the section labelled <strong>{reminder.slot.label.toUpperCase()}</strong>.</p><div className="reminder-medicines">{reminder.medicines.map(m => <MedicineRow key={m.id} medicine={m}/>)}</div><p className="reminder-note">Follow your prescribed instructions. Dismissing this reminder does not record medicine intake.</p><div className="reminder-actions"><button className="primary" onClick={() => {setPage('Today'); setExpanded(reminder.slot.id); decideReminder();}}>View medicines<ArrowRight size={16}/></button><button className="secondary" onClick={() => decideReminder(true)}><Clock3 size={15}/>Remind me in 5 minutes</button><button className="text-button" onClick={() => decideReminder()}>Dismiss reminder</button></div></div>
     </Modal>}
     {toast && <div className="toast" role="status"><Check size={17}/>{toast}<button aria-label="Dismiss message" onClick={()=>setToast('')}><X size={15}/></button></div>}
   </div>;
@@ -125,4 +148,4 @@ function TimesForm({workspace,busy,onSave,onCancel}) {
   const [error,setError]=useState('');
   return <form onSubmit={e=>{e.preventDefault();const d=new FormData(e.currentTarget);const slots=workspace.slots.map(s=>({...s,time:d.get(s.id)||null}));try{validateSlots(slots,workspace.settings.grace);if(slots.some(s=>!s.time&&slotMedicines(workspace,s.id).length))throw new Error('Keep a reminder time for every section that has medicines.');setError('');onSave(slots);}catch(e){setError(e.message);}}}><span className="modal-icon"><Clock3 size={24}/></span><h2>Reminder times</h2><p>Choose times that fit your prescribed routine. Unused sections can stay blank.</p><div className="form-fields form-grid">{workspace.slots.map(s=><label key={s.id}>{s.label}<input type="time" name={s.id} defaultValue={s.time||''} required={slotMedicines(workspace,s.id).length>0}/></label>)}</div>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-footer"><button className="secondary" type="button" disabled={busy} onClick={onCancel}>Cancel</button><button className="primary" disabled={busy}>{busy?'Saving…':'Save times'}</button></div></form>;
 }
-createRoot(document.getElementById('root')).render(<App/>);
+createRoot(document.getElementById('root')).render(<PatientAccess>{access => <App key={access.user?.id || 'on-device'} access={access}/>}</PatientAccess>);

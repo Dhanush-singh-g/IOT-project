@@ -12,16 +12,17 @@ At each scheduled time, the matching LED blinks and one external buzzer sounds. 
 
 | Component | Current status |
 | --- | --- |
-| React/Vite frontend | Implemented: Today, Schedule, History |
+| React/Vite frontend | Implemented: patient sign-in screen, Today, Schedule, History |
 | Local schedule storage | Implemented: user-entered records in the current browser only |
 | Live API adapter | Implemented connection hooks; requires the backend described in the integration guide |
-| Spring Boot backend and MySQL | Planned; not included in this repository |
-| Authentication and shared patient access | Planned; not included |
+| Spring Boot backend and PostgreSQL | Planned; not included in this repository |
+| Patient sign-in integration | Frontend session/login/logout adapter implemented; server authentication and shared patient authorization still required |
+| Active-dashboard popups | Implemented: visible/focused view, dated reminders, dismiss and five-minute snooze |
 | ESP32 firmware and physical hardware | Planned; wiring is a proposed build, not physically verified |
 | Local hardware reminders and event uploads | Require the backend, firmware, and hardware implementation |
 | SMS/email alerts | Optional future work; not implemented or needed for the first end-to-end version |
 
-The frontend starts empty. It does not insert sample patients, sample prescriptions, sensor readings, or opening events. Local mode cannot create physical box history or operate a buzzer. A successful frontend build does not mean the complete connected system is deployed.
+The frontend starts empty. It does not insert sample patients, sample prescriptions, sensor readings, or opening events. Local mode cannot create physical box history or operate a buzzer. Its explicit on-device entry is not authentication. In-app popups use the actual entered schedule while the page is active; they do not confirm intake. A successful frontend build does not mean the complete connected system is deployed.
 
 ## 3. Architecture diagram
 
@@ -32,7 +33,7 @@ flowchart LR
     U[Patient or caregiver] --> W[React web app]
     W -. Local mode only .-> L[(Browser storage)]
     W <-->|HTTPS REST: live mode| B[Spring Boot backend]
-    B <--> D[(MySQL)]
+    B <--> D[(PostgreSQL)]
     E[ESP32] <-->|Wi-Fi + HTTPS REST| B
     S[One shared-lid ultrasonic sensor] --> E
     E --> M[Morning LED]
@@ -43,7 +44,7 @@ flowchart LR
     T[Optional DS3231 backup clock] --> E
 ```
 
-The browser calls the backend, not the ESP32. The ESP32 initiates outbound requests, so it does not need a public IP address or an exposed inbound port. Neither the browser nor firmware connects directly to MySQL. MQTT is unnecessary for the initial version.
+The browser calls the backend, not the ESP32. The ESP32 initiates outbound requests, so it does not need a public IP address or an exposed inbound port. Neither the browser nor firmware connects directly to PostgreSQL. MQTT is unnecessary for the initial version.
 
 ## 4. Responsibilities
 
@@ -62,7 +63,7 @@ The browser calls the backend, not the ESP32. The ESP32 initiates outbound reque
 
 1. Caregiver adds a prescribed medicine to a daily section and chooses its reminder time.
 2. In local mode, the app saves it only in that browser.
-3. In live mode, the backend atomically saves the medicine and the section's shared reminder time in MySQL.
+3. In live mode, the backend atomically saves the medicine and the section's shared reminder time in PostgreSQL.
 4. Backend generates dated reminder instances with stable IDs and UTC timestamps.
 5. ESP32 downloads a versioned upcoming-reminder snapshot and saves it persistently.
 
@@ -108,7 +109,7 @@ Keep recurring schedules separate from dated access records. Yesterday's event m
 
 ## 8. Deployment boundary
 
-For a real deployment, serve the frontend and API through HTTPS, preferably on the same origin. Complete caregiver authentication, patient authorization, CSRF/session handling, device provisioning, TLS certificate validation, and database persistence before use with real patient information.
+For a real deployment, serve the frontend and API through HTTPS, preferably on the same origin. Complete server-side patient/caregiver authentication, patient authorization, CSRF/session validation, device provisioning, TLS certificate validation, and database persistence before use with real patient information.
 
 Device credentials belong in controlled firmware/backend provisioning, never in browser variables, Git, or URLs. The web app should continue to expose only routine management and box history; calibration and firmware diagnostics belong in protected operator tooling.
 

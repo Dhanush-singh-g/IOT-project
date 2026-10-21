@@ -1,11 +1,11 @@
 # 2. Integrate the web app with the microcontroller
 
-For the complete component design, see [System architecture](04_SYSTEM_ARCHITECTURE.md). For physical wiring, see [Hardware connections](03_HARDWARE_CONNECTIONS.md). Hardware setup is intentionally kept outside the user interface. The app has three pages: Today, Schedule, and History. It contains no sample patients, sample medicines, device simulator, or invented box readings.
+For the complete component design, see [System architecture](04_SYSTEM_ARCHITECTURE.md). For physical wiring, see [Hardware connections](03_HARDWARE_CONNECTIONS.md). Hardware setup is intentionally kept outside the user interface. The app has patient sign-in followed by Today, Schedule, and History. It contains no sample patients, sample medicines, device simulator, or invented box readings.
 
 ## 1. Connection overview
 
 ```text
-React frontend <-- HTTPS --> Spring Boot + MySQL <-- HTTPS / Wi-Fi --> ESP32
+React frontend <-- HTTPS --> Spring Boot + PostgreSQL <-- HTTPS / Wi-Fi --> ESP32
                                                                      |
                                                 one ultrasonic sensor + four LEDs + buzzer
 ```
@@ -22,7 +22,7 @@ There are four labelled sections: Morning, Afternoon, Evening, Night, under one 
 | `src/main.jsx` | User-facing Today, Schedule, History; no sensor configuration UI |
 | Separate firmware project | Credentials, Wi-Fi, calibrated sensing, timekeeping, local alarms, durable events |
 
-Default mode is `local`: an empty schedule with only user-entered data saved in this browser, no sensor events or automatic reminders. Earlier demo storage keys are preserved but ignored. The new storage key is `smartmed-personal-workspace-v1`.
+Default mode is `local`: an empty schedule with only user-entered data saved in this browser, no sensor events or physical alarms. In-app reminder popups work for user-entered schedules while the dashboard is active. Earlier demo storage keys are preserved but ignored. The new storage key is `smartmed-personal-workspace-v1`.
 
 After implementing the backend:
 
@@ -72,7 +72,7 @@ When a box has actually been provisioned, `device` may contain its `id`, heartbe
 
 Schedule previews are based on entered times, not claims about completed intake. The app makes no missed-dose conclusion from absent events. Keep event ingestion and reminder reconciliation on the backend. Do not encode recurring medicine entries as mutable “taken” flags.
 
-For long histories, add cursor pagination/date filtering to the API adapter and UI. Existing export covers loaded events only. The browser uses cookie credentials; implement real login/session authorization and the adapter's CSRF header before production writes.
+For long histories, add cursor pagination/date filtering to the API adapter and UI. Existing export covers loaded events only. The browser uses cookie credentials and the session CSRF token in the `X-CSRF-Token` header. Implement the server-side contract below before production writes.
 
 ## 4. ESP32-facing endpoints to implement in Spring Boot
 
@@ -142,3 +142,38 @@ If the lid was already open when a reminder became due, flag that condition and 
 - Daily refilling is manual. The system does not measure pill count or verify loading.
 
 Acceptance check: a physical shared-lid opening → one committed backend event → updated dashboard within its polling interval. Repeat the upload, disconnect/reconnect Wi-Fi, restart the board, cross a local midnight, and edit a schedule. Confirm no duplicate event, false medicine confirmation, or lost historical context.
+
+## 7. Patient session endpoints
+
+Implement these routes under the same `/api/v1` base. `src/api/auth.js` handles them; `src/PatientLogin.jsx` renders the page. PostgreSQL is the planned persistent store; no database or account server is included in this repository yet.
+
+| Method and path | Required behavior |
+| --- | --- |
+| `GET /auth/session` | Return HTTP 200 with `{user: null, csrfToken}` for anonymous callers, or a verified patient user and CSRF token for authenticated callers |
+| `POST /auth/login` | Accept `{email, password}` with the anonymous session's `X-CSRF-Token`; verify credentials on the server, rotate the session, set a secure HttpOnly session cookie, and return user plus a rotated CSRF token |
+| `POST /auth/logout` | Validate session/CSRF, invalidate the server session and expire its cookie; return HTTP 204 |
+
+Authenticated response shape:
+
+```json
+{
+  "user": {
+    "id": "server-assigned-patient-id",
+    "displayName": "the actual patient's display name",
+    "role": "PATIENT"
+  },
+  "csrfToken": "server-generated-session-bound-token"
+}
+```
+
+This is a response contract, not a seeded account. The UI accepts only verified `PATIENT` sessions. Store salted password hashes using an appropriate password-hashing algorithm such as Argon2id or bcrypt, never plaintext passwords. Enforce session expiry, login rate limiting, patient authorization, cookie security, and CSRF checks on the server. The browser does not store passwords, auth tokens, or patient sessions in localStorage. It keeps only the CSRF token in memory. Configure session cookies with Secure/HttpOnly and an appropriate SameSite setting; use same-origin HTTPS where possible.
+
+Return HTTP 401 for invalid credentials/session expiry and 429 for throttling. A 401 from a workspace request returns the app to sign-in; a 403 is an authorization failure, not a successful save. A failed logout leaves the patient view open with a retry message so the app does not falsely claim the server session ended. Provision patient accounts through the backend; self-registration and password recovery are not implemented here.
+
+## 8. Active-dashboard reminders
+
+`src/reminders.js` selects a slot only when it has user-entered medicines and its scheduled time has arrived in the patient's timezone. The dashboard checks every five seconds and on focus/visibility changes. It shows the popup only while visible and focused, with a valid loaded schedule and no schedule-edit dialog or connection error.
+
+The popup lists the actual prescribed entries and section label. Dismiss and View medicines suppress that dated slot/time reminder, not medicine intake. Five-minute snooze can recur after the chosen delay. Decisions are scoped to the signed-in server user ID (or the explicitly local workspace) and stored as minimal reminder IDs/timestamps, separately from box history. They are not sent to event ingestion and do not satisfy reminder instances on the backend. Changed reminder times and new days have separate keys. Stale reminders/snoozes are not replayed hours later.
+
+This is an in-app convenience, not background notification delivery. Browser throttling, focus, tab closure, sign-out, and device sleep affect it. Keep physical reminders on ESP32 and implement remote notification delivery separately if required.

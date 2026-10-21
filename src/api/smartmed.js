@@ -1,10 +1,10 @@
 import {createWorkspace, STORAGE_KEY, validateSlots, validateWorkspace} from '../model.js';
+import {DATA_MODE, BASE_URL} from './config.js';
+import {csrfHeaders} from './auth.js';
+export {DATA_MODE} from './config.js';
 
 // ESP32 CONNECTION PLACEHOLDER: the browser calls your backend, never the board directly.
 // Local mode starts empty and stores only user-entered schedules. It cannot create sensor events.
-const environment = import.meta.env || {};
-export const DATA_MODE = environment.VITE_DATA_MODE === 'live' ? 'live' : 'local';
-const BASE_URL = (environment.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '');
 function readLocal() {
   try {const saved = localStorage.getItem(STORAGE_KEY); return saved ? validateWorkspace(JSON.parse(saved)) : createWorkspace();}
   catch {throw new Error('Your saved schedule could not be read. Your browser data has been kept. Please contact support before clearing it.');}
@@ -18,13 +18,17 @@ async function request(path, {method = 'GET', body} = {}) {
   try {
     response = await fetch(BASE_URL + path, {
       method, credentials: 'include', signal: AbortSignal.timeout(10000),
-      headers: {'Accept': 'application/json', ...(body ? {'Content-Type': 'application/json'} : {})},
+      headers: {'Accept': 'application/json', ...(body ? {'Content-Type': 'application/json', ...csrfHeaders()} : {})},
       body: body ? JSON.stringify(body) : undefined,
-      // CONNECTION PLACEHOLDER: add the backend's CSRF header for cookie-authenticated writes.
+      // Session CSRF tokens come from /auth/session and /auth/login.
       // Device credentials and Wi-Fi passwords belong only in backend/firmware provisioning.
     });
   } catch {throw new Error('We could not connect. Check your connection and try again.');}
-  if (response.status === 401 || response.status === 403) throw new Error('Your session could not be verified. Please sign in again.');
+  if (response.status === 401) {
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('smartmed-session-expired'));
+    throw new Error('Your session has expired. Please sign in again.');
+  }
+  if (response.status === 403) throw new Error('You do not have permission to change this schedule.');
   if (!response.ok) throw new Error('Your changes could not be completed. Please try again.');
   if (response.status === 204) return null;
   try {return await response.json();} catch {throw new Error('Your data could not be loaded. Please try again.');}
