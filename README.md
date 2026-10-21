@@ -1,6 +1,6 @@
 # SmartMed
 
-A medicine schedule and box-access app for four daily sections—Morning, Afternoon, Evening, Night—under one shared lid. The user interface has a patient sign-in page and three dashboard pages: Today, Schedule, and History.
+A medicine schedule and box-access app for four daily sections—Morning, Afternoon, Evening, Night—under one shared lid. The user interface has a patient sign-in page and two dashboard pages: Today and History. Today shows four always-visible sections with medicine and reminder-time editing in place.
 
 ## Documentation
 

@@ -1,6 +1,6 @@
 # 2. Integrate the web app with the microcontroller
 
-The Express API is implemented in `server/`, backed by PostgreSQL. The firmware starter is in `firmware/SmartMed/`. The web interface remains Today, Schedule, and History; hardware provisioning and calibration stay in operator tooling.
+The Express API is implemented in `server/`, backed by PostgreSQL. The firmware starter is in `firmware/SmartMed/`. The web interface has Today (four visible sections with medicine editing) and History; hardware provisioning and calibration stay in operator tooling.
 
 ```text
 React dashboard <-- HTTPS --> Express API + PostgreSQL <-- HTTPS / Wi-Fi --> ESP32
