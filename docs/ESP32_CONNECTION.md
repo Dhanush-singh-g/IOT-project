@@ -1,135 +1,78 @@
-# ESP32 connection placeholders: single shared lid
+# ESP32 and backend integration — developer guide
 
-This is the current connection contract for SmartMed. The backend and firmware are not implemented in this repository. The React frontend works in demo mode now and contains a live HTTP adapter ready for a backend implementing this contract.
+Hardware setup is intentionally kept outside the user interface. The app has three pages: Today, Schedule, and History. It contains no sample patients, sample medicines, device simulator, or invented box readings.
 
-## 1. What the device can measure
-
-The box has four labelled sections: **Morning, Afternoon, Evening, Night**. Multiple prescribed medicines may be loaded in each section. There is **one lid for the entire box**, **one ultrasonic sensor**, **four LEDs**, and **one shared external buzzer**.
-
-The sensor reports `BOX_OPENED` and `BOX_CLOSED`. It cannot determine a selected compartment, medicine, quantity removed, or ingestion. A backend may associate an opening with the reminder active at that time; that is timing context, not verification.
+## 1. Architecture and measurement limits
 
 ```text
-React frontend <--- HTTPS ---> Spring Boot + MySQL <--- HTTPS / Wi-Fi ---> ESP32
-                                                                         |
-                                                      shared-lid sensor + 4 LEDs + buzzer
+React frontend <-- HTTPS --> Spring Boot + MySQL <-- HTTPS / Wi-Fi --> ESP32
+                                                                     |
+                                                one ultrasonic sensor + four LEDs + buzzer
 ```
 
-## 2. Exact files to change
+There are four labelled sections: Morning, Afternoon, Evening, Night, under one shared lid. Several medicines may share a section. The one sensor reports `BOX_OPENED` and `BOX_CLOSED`; it cannot identify a selected compartment, medicine, quantity, or ingestion. Reminder association is timing context only.
 
-| File | What to do |
+## 2. Configuration and code locations
+
+| File | Purpose |
 | --- | --- |
-| `.env.example` → `.env.local` | Set the public backend URL and switch demo to live after endpoints exist |
-| `src/api/smartmed.js` | Search `ESP32 CONNECTION PLACEHOLDER`; map routes, session/CSRF handling, and response validation to your backend |
-| `src/main.jsx` | Uses the adapter already; reads `dailyStatuses` from the backend in live mode |
-| `src/model.js` | Shared frontend slot/event model and demo timing logic; not production firmware |
-| Firmware project, to be created separately | Wi-Fi provisioning, timekeeping, sensing, alarms, durable queue, HTTPS uploads |
+| `.env.example` copied to `.env.local` | Public API URL and `local` or `live` data mode |
+| `src/api/smartmed.js` | API integration hooks; search `CONNECTION PLACEHOLDER` |
+| `src/model.js` | Empty workspace structure, validation, time helpers, CSV escaping |
+| `src/main.jsx` | User-facing Today, Schedule, History; no sensor configuration UI |
+| Separate firmware project | Credentials, Wi-Fi, calibrated sensing, timekeeping, local alarms, durable events |
+
+Default mode is `local`: an empty schedule with only user-entered data saved in this browser, no sensor events or automatic reminders. Earlier demo storage keys are preserved but ignored. The new storage key is `smartmed-personal-workspace-v1`.
+
+After implementing the backend:
 
 ```dotenv
 VITE_DATA_MODE=live
 VITE_API_BASE_URL=https://YOUR-BACKEND/api/v1
 ```
 
-Restart Vite after changing `.env.local`. `VITE_*` values are public browser-bundle values: never store Wi-Fi passwords or device credentials there. Keep this file out of Git. Demo mode uses a new `smartmed-shared-lid-v1` localStorage key; earlier per-compartment demo data is left untouched and is not reused as shared-lid evidence.
+Restart Vite after editing `.env.local`. Browser variables are public; never place device tokens or Wi-Fi passwords in them. Live mode polls every 10 seconds. Invalid data, failed writes, and connection errors are reported without synthetic fallback. No manual create-event endpoint is exposed by the frontend adapter.
 
-In live mode the app polls `GET /workspace` every 10 seconds and reloads it after successful mutations. A timeout, invalid payload, or failed request is shown as an error; it does not fall back to sample medicines. Live simulation controls are disabled/hidden.
+## 3. Frontend contract
 
-## 3. Frontend API contract
-
-Routes below are relative to `VITE_API_BASE_URL`. Successful mutations can return JSON or HTTP 204; the app fetches `/workspace` afterward. Return validation failures as non-2xx responses. Dates and timestamps must be valid; authorize access to the correct workspace on every route.
-
-| Route | Purpose |
+| Endpoint | Purpose |
 | --- | --- |
-| `GET /workspace` | Complete patient-authorized dashboard snapshot |
-| `POST /medicines` | Create a medicine entry in a daily slot |
-| `PATCH /medicines/{id}` | Edit an entry |
-| `DELETE /medicines/{id}` | Remove future scheduled entry; retain historical event snapshots |
-| `PUT /slots` | Save four non-overlapping daily reminder times |
-| `PUT /settings` | Save care and sensor/reminder preferences; create a desired device configuration version |
+| `GET /workspace` | Authenticated, authorized schedule and real event snapshot |
+| `POST /medicines` | Create a medicine and atomically apply its section reminder time |
+| `PATCH /medicines/{id}` | Edit a medicine and atomically apply its section reminder time |
+| `DELETE /medicines/{id}` | Remove future entry; preserve immutable historical events |
+| `PUT /slots` | Update all four section times; unused times may be null |
 
-Medicine mutation body:
+Medicine mutations contain `name`, `strength`, `quantity`, optional `instructions`, `slotId`, and `reminderTime` (`HH:mm`). An edit also includes `id`. **Apply the medicine and its shared section time in one database transaction.** Changing the time affects every medicine in that section. Return non-2xx on validation failure so the UI does not claim a save. Successful writes return JSON or HTTP 204; the app then reloads the workspace.
 
-```json
-{
-  "name": "Example prescribed medicine",
-  "strength": "500 mg",
-  "quantity": "1 tablet",
-  "instructions": "As prescribed",
-  "slotId": "morning"
-}
-```
+Enforce the four exact slot IDs and valid times server-side. Sections with medicines must have a time; unused sections may have `time: null`. Prevent overlapping follow-up windows, including across midnight. `PUT /slots` takes `{"slots": [...]}`.
 
-Slot IDs are exactly `morning`, `afternoon`, `evening`, `night`. One medicine entry belongs to one slot; if prescribed at two times, create two entries. Several medicines may share a slot. The prescription, not the software, determines quantities and instructions.
-
-`PUT /slots` takes `{"slots": [...]}` with the same four slot objects as the snapshot. Validate reminder windows, including windows across midnight. `PUT /settings` takes the settings object below; validate numeric ranges and names server-side and return only approved fields in the snapshot.
-
-### Example GET /workspace response
-
-The single medicine and event below illustrate shape, not medical advice. A real response returns all medicine entries and all events currently loaded for display/export.
+### Empty workspace response shape
 
 ```json
 {
   "slots": [
-    {"id":"morning","label":"Morning","time":"08:00","color":"green"},
-    {"id":"afternoon","label":"Afternoon","time":"13:00","color":"orange"},
-    {"id":"evening","label":"Evening","time":"18:00","color":"purple"},
-    {"id":"night","label":"Night","time":"21:00","color":"blue"}
+    {"id":"morning","label":"Morning","time":null},
+    {"id":"afternoon","label":"Afternoon","time":null},
+    {"id":"evening","label":"Evening","time":null},
+    {"id":"night","label":"Night","time":null}
   ],
-  "medicines": [
-    {"id":"m1","name":"Example prescribed medicine","strength":"500 mg","quantity":"1 tablet","instructions":"As prescribed","slotId":"morning"}
-  ],
-  "events": [
-    {
-      "id":"event-001",
-      "deviceId":"SM-HOME-001",
-      "type":"BOX_OPENED",
-      "occurredAt":"2027-01-15T02:34:00Z",
-      "source":"ESP32",
-      "reminderContext": {
-        "slotId":"morning",
-        "label":"Morning",
-        "date":"2027-01-15",
-        "scheduledTime":"08:00",
-        "medicines":[{"name":"Example prescribed medicine","strength":"500 mg","quantity":"1 tablet"}]
-      }
-    }
-  ],
-  "settings": {
-    "patient":"Patient name",
-    "caregiver":"Caregiver name",
-    "timezone":"Asia/Kolkata",
-    "threshold":8,
-    "stability":1000,
-    "grace":20,
-    "repeat":5
-  },
-  "device": {
-    "id":"SM-HOME-001",
-    "online":true,
-    "lidState":"CLOSED",
-    "distanceCm":3.2,
-    "ledSlotId":null,
-    "buzzerActive":false,
-    "lastSeen":"2027-01-15T02:40:00Z",
-    "desiredConfigVersion":3,
-    "appliedConfigVersion":3
-  },
-  "dailyStatuses": {
-    "date":"2027-01-15",
-    "bySlot": {
-      "morning":"Box opened",
-      "afternoon":"Not scheduled",
-      "evening":"Not scheduled",
-      "night":"Not scheduled"
-    }
-  }
+  "medicines": [],
+  "events": [],
+  "settings": {"timezone":"Asia/Kolkata","grace":20},
+  "device": null
 }
 ```
 
-Sort events newest first. Event `type` in this view must be `BOX_OPENED` or `BOX_CLOSED`; expose sensor faults through device health, or extend the frontend explicitly. For an opening outside a reminder window, or for a closing event, return `reminderContext: null`. An associated event must carry an immutable snapshot of the scheduled slot and medicines as context; never rewrite it after schedule edits. It does not mean those medicines were selected.
+Populate only real user records. Medicine records require a stable string `id`, `name`, `strength`, `quantity`, `slotId`, and optionally `instructions`. Never seed production records from examples. `settings.timezone` is the patient's real IANA timezone; `grace` is an integer from 1 to 180.
 
-`dailyStatuses.date` is the patient's local date. Allowed display values: `Upcoming`, `Due now`, `Box opened`, `No opening recorded`, `Awaiting sync`, `Monitoring unavailable`, and `Not scheduled`. Missing or stale status dates display as `Awaiting sync`. Device `online` must be derived from recent heartbeats, not a permanent database flag. Use `lidState: "UNKNOWN"` and `distanceCm: null` for invalid readings. Only report `ledSlotId` and `buzzerActive` from actual output telemetry.
+Each real event must have a string `id`, `type` (`BOX_OPENED` or `BOX_CLOSED`), valid UTC `occurredAt`, and optional `reminderContext`. A context has the reminder `label` and can retain internal slot/date/prescription snapshots for audit. Do not imply that context proves medicine selection. For unscheduled events, use null. Preserve context after schedule edits.
 
-For long histories, add cursor pagination and date filters to the adapter/UI; the existing CSV exports only loaded records. Production recurring reminders need separate dated reminder/dose instances in the database, not mutable medicine-level “taken” flags.
+When a box has actually been provisioned, `device` may contain its `id`, heartbeat-derived `online` boolean, and UTC `lastSeen`. The user interface displays connected only when the report is less than 90 seconds old. Sensor distances, output states, firmware versions, and thresholds do not belong in this user view.
+
+Schedule previews are based on entered times, not claims about completed intake. The app makes no missed-dose conclusion from absent events. Keep event ingestion and reminder reconciliation on the backend. Do not encode recurring medicine entries as mutable “taken” flags.
+
+For long histories, add cursor pagination/date filtering to the API adapter and UI. Existing export covers loaded events only. The browser uses cookie credentials; implement real login/session authorization and the adapter's CSRF header before production writes.
 
 ## 4. ESP32-facing endpoints to implement in Spring Boot
 
@@ -173,7 +116,7 @@ Commit to the database before replying:
 
 Use a unique `(device_id, event_id)` database constraint. An identical retry returns the same acknowledgment without duplicating history; conflicting payloads under the same ID are rejected. Firmware deletes only acknowledged events. Retrying uploads must reuse the original event ID and occurrence time.
 
-Configuration must include measured closed baseline, open and lower close thresholds, stability window, invalid-reading handling, reminder repeat/follow-up intervals, and a version. Values of 8 cm and 1000 ms in the UI are unvalidated examples. The backend must reject a threshold incompatible with the calibrated closing threshold. Firmware validates and atomically applies a configuration, then reports `appliedConfigVersion`. Until then show pending sync.
+Configuration must include measured closed baseline, open and lower close thresholds, stability window, invalid-reading handling, reminder repeat/follow-up intervals, and a version. Sensor thresholds belong in protected device configuration, not the patient interface. The backend must reject a threshold incompatible with the calibrated closing threshold. Firmware validates and atomically applies a configuration, then reports `appliedConfigVersion`. Retain and track the pending configuration in the backend until acknowledgment; keep diagnostics out of the patient interface.
 
 ## 5. Firmware behavior
 
@@ -194,7 +137,7 @@ If the lid was already open when a reminder became due, flag that condition and 
 - Prefer frontend and API on the same HTTPS origin. For separate origins, explicitly configure CORS, cookie attributes, and credentials; never use wildcard origins with credentialed requests.
 - Each ESP32 needs its own revocable device credential. Keep it out of Git, logs, URLs, and the React bundle. Authenticate the device ID against that credential. Validate server certificates on the ESP32.
 - `localhost` on the ESP32 means the ESP32, not your development computer. Use a reachable LAN backend address for a controlled bench test, or a public HTTPS endpoint for deployment. Home Wi-Fi cannot reach an isolated cloud workspace's private IP directly.
-- Store timestamps in UTC; render the patient timezone. Production backend handles timezone/DST rules and window reconciliation. Demo timing uses local wall-clock windows and defaults to Asia/Kolkata.
+- Store timestamps in UTC; render the patient timezone. Production backend handles timezone/DST rules and window reconciliation. Local-only schedules use the browser timezone. Live workspaces use the patient timezone returned by the backend.
 - Preserve queued events across power loss. A heartbeat does not prove an offline window had no openings. Finalize `No opening recorded` only after acknowledged event coverage and healthy monitoring establish it; otherwise keep `Awaiting sync` or `Monitoring unavailable`.
 - Daily refilling is manual. The system does not measure pill count or verify loading.
 

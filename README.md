@@ -1,45 +1,45 @@
-# SmartMed — one box, four daily moments
+# SmartMed
 
-A responsive React dashboard for a medicine box with **one shared lid, one ultrasonic sensor, four time-slot LEDs, and one external buzzer**.
+A simple medicine routine for a box with four daily sections under one shared lid.
 
-## Run
+## Run on your laptop
 
-For step-by-step Windows/macOS/Linux instructions, see [LOCAL_SETUP.md](docs/LOCAL_SETUP.md).
-
-Use Node.js 22 or later.
+Install Node.js 22 or later and Git, then:
 
 ```sh
+git clone https://github.com/Dhanush-singh-g/IOT-project.git
+cd IOT-project
 npm ci
 npm run dev -- --port 5173
 ```
+
+Open the localhost address printed by Vite. Full instructions: [LOCAL_SETUP.md](docs/LOCAL_SETUP.md).
+
+## Three pages
+
+- **Today:** prescribed medicines, quantities, instructions, and the labelled section to use.
+- **Schedule:** add/edit/remove medicines and set daily reminder times.
+- **History:** real whole-box opening/closing records supplied by the backend.
+
+The app starts empty. There are no seeded patient names, medicines, reminder times, device readings, or simulated events. Hardware setup and development information are kept in documentation, outside the user interface.
+
+Default **local mode** stores only user-entered schedules in this browser. It does not run automatic reminders, synchronize to another device, or manufacture box history. A separate storage key, `smartmed-personal-workspace-v1`, prevents previous sample records from appearing; old prototype keys are preserved but not automatically imported.
+
+Multiple medicines can share Morning, Afternoon, Evening, or Night. Each section has one shared reminder time. The caregiver fills the sections daily according to the prescription. Opening the shared lid does not identify the selected medicine or verify ingestion.
+
+## Connecting real services
+
+See [ESP32_CONNECTION.md](docs/ESP32_CONNECTION.md), [DEVICE_INTEGRATION.md](docs/DEVICE_INTEGRATION.md), and [HARDWARE_WIRING.md](docs/HARDWARE_WIRING.md).
+
+Copy `.env.example` to `.env.local` and set `VITE_DATA_MODE=live` with the real API URL only when the backend exists. Integration hooks stay in `src/api/smartmed.js`. Live connection failures are displayed without substituting synthetic data.
+
+This repository contains the frontend, not a complete production healthcare service. Backend authentication/authorization, secure shared storage, hardware integration, firmware, and remote notification delivery remain to be implemented before a real deployment. The optional Google Fonts request has local font fallbacks.
+
+## Checks
 
 ```sh
 npm test
 npm run build
 ```
 
-`npm run build` creates the production frontend in `dist/`.
-
-## What the app does
-
-- Patient-friendly Today screen: medicine names, strengths, quantities, instructions, and the labelled section to use.
-- Morning, Afternoon, Evening, Night slots, each with an editable daily reminder time and multiple medicines.
-- One shared-lid device view, open/close simulation, whole-box history, and CSV export.
-- Care profile and locally saved reminder/sensor preferences.
-- Responsive navigation, accessible dialogs, and separate demo/live data adapters.
-
-**Box opened is not medicine taken.** One shared sensor cannot establish which section was accessed or verify medicine identity, quantity, or ingestion. An event's reminder context is a time association only. A caregiver must load the day's prescribed medicines and refill the box daily.
-
-## Connect ESP32 and backend
-
-See [ESP32_CONNECTION.md](docs/ESP32_CONNECTION.md) for exact integration steps and payloads, [DEVICE_INTEGRATION.md](docs/DEVICE_INTEGRATION.md) for the architecture, and [HARDWARE_WIRING.md](docs/HARDWARE_WIRING.md) for the single-sensor wiring plan.
-
-Copy `.env.example` to `.env.local`. Default `VITE_DATA_MODE=demo` works without a server. When Spring Boot implements the documented contract, set `VITE_DATA_MODE=live` and `VITE_API_BASE_URL` to its public API URL, then restart Vite. Search for `ESP32 CONNECTION PLACEHOLDER` in `src/api/smartmed.js` and `src/main.jsx` for the integration points. Never put device credentials in frontend variables.
-
-Live mode polls the backend every 10 seconds, disables demo hardware controls, and reports connection failures without substituting sample data. Authentication, CSRF/session integration, backend endpoints, database, real notifications, and firmware are still to be implemented.
-
-## Demo boundaries
-
-Demo medicines are illustrative, not prescriptions. State uses browser localStorage key `smartmed-shared-lid-v1`; earlier per-compartment prototype keys are left untouched. A shared-lid opening never updates a medicine-level intake flag. New days have separate reminder status; historical event context survives medicine changes.
-
-Demo events are created by opening/closing the simulated lid, not by measured distance. Threshold preferences do not configure physical hardware. Local demo reminder states are illustrative; real missed-opening decisions require backend coverage reconciliation. No real buzzer, LED, email, SMS, or background alarm is driven by this frontend. Google Fonts is optional with local sans-serif fallbacks. Do not enter sensitive patient data before authentication and a suitable deployment exist.
+`npm run build` creates `dist/`. Use `npm run preview -- --port 4173` to inspect it locally.

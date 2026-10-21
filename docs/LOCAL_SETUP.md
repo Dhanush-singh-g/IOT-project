@@ -29,20 +29,20 @@ Keep this terminal open. Open http://localhost:5173 in your browser. If that por
 
 If the repository is private, sign in using your Git installation's supported GitHub authentication flow when prompted. You must have access to the repository; do not paste tokens into the clone URL.
 
-No ESP32, backend, database, .env file, or credentials are required for demo mode. Only initial dependency installation requires Internet access. The optional Google Fonts request can fall back to local fonts.
+No ESP32, backend, database, .env file, or credentials are required for local mode. Only initial dependency installation requires Internet access. The optional Google Fonts request can fall back to local fonts.
 
 ## 3. Try the app
 
-1. On **Today**, select Morning, Afternoon, Evening, or Night to see the scheduled medicine names, quantities, and instructions.
-2. On **Medication schedule**, add multiple medicines to a slot or edit/remove existing sample entries.
-3. Use **Edit times** to change the four daily reminder times.
-4. On **My device**, click **Simulate box opening**, then **Close demo lid**.
-5. On **Box history**, check opening/closing events and try CSV export.
-6. On **Settings**, update sample profiles or sensor preferences.
+1. The app starts empty. On **Today**, choose **Add your first medicine**.
+2. Enter the prescribed medicine name, strength, quantity, part of the day, and reminder time. Instructions are optional.
+3. Add more medicines to the same section if needed; they share its reminder time.
+4. Use **Today** to review the schedule and matching compartment label.
+5. On **Schedule**, edit/remove entries or choose **Edit reminder times**.
+6. **History** stays empty until real box events are supplied by a connected backend. There are no simulation controls or invented readings.
 
-Records are saved in this browser's localStorage. Opening the box does not verify medicine selection or intake. No real alarm, device output, or message is sent. Do not enter real patient information into the prototype.
+Local schedules are saved only in this browser. Automatic reminders and box history are not connected. This frontend does not send real alarms or messages. The box cannot verify which medicine was selected or taken.
 
-To test a reminder association, set one slot's reminder time to the current time in the displayed patient timezone (default Asia/Kolkata), then simulate a new opening within the follow-up window. The event will show timing context only. Close the simulated lid before opening again.
+Previous prototype/sample records are not loaded into the new app. Their localStorage keys are left untouched; no existing browser data is deleted automatically.
 
 ## 4. Stop and restart
 
@@ -88,8 +88,8 @@ Open http://localhost:4173. Stop this server with Ctrl+C too.
 | `node`, `npm`, or `git` is not recognized | Install the missing prerequisite and reopen the terminal |
 | PowerShell blocks `npm.ps1` | Use `npm.cmd ci` and `npm.cmd run dev -- --port 5173`, or use Command Prompt; no policy change is needed |
 | Port 5173 is occupied | Use the URL Vite prints, or run `npm run dev -- --port 5175` |
-| Workspace unavailable / backend error | Remove an unintended `.env.local` live-mode setting or set `VITE_DATA_MODE=demo`, then restart Vite |
-| Old sample edits remain | In browser developer tools, remove only the localStorage key `smartmed-shared-lid-v1` for this site, then reload; this deletes that browser's demo edits/history |
+| Workspace unavailable / backend error | Remove an unintended `.env.local` live-mode setting or set `VITE_DATA_MODE=local`, then restart Vite |
+| Need to clear your local schedule | Back up the information first, then remove only `smartmed-personal-workspace-v1` from this site's browser localStorage and reload. This deletes your locally entered schedule. |
 | `npm ci` fails | Confirm Node is 22 or later and the package registry is reachable; retain the error output for diagnosis |
 
 ## 8. Connecting real hardware later

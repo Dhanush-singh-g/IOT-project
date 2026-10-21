@@ -25,4 +25,4 @@ React dashboard <-- HTTPS --> Spring Boot API <--> MySQL
 - ESP32 keeps reminders and queued events in persistent storage. The backend deduplicates uploads and reconciles offline evidence.
 - Frontend live mode calls the backend; device credentials never appear in browser configuration.
 
-The current app defaults to browser-local demo data. Backend, authenticated accounts, physical alarms, firmware, and remote alerts still require implementation. The live adapter contains explicit placeholders and does not simulate success if the backend is unavailable.
+The current app defaults to an empty browser-local schedule containing only user-entered records. Backend, authenticated accounts, physical alarms, firmware, and remote alerts still require implementation. The live adapter contains developer-only integration hooks and does not simulate success if the backend is unavailable. Sensor diagnostics and setup instructions are not shown in the user interface.

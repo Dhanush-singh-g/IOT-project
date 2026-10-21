@@ -1,181 +1,128 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {ArrowRight, ArrowUpRight, Bell, CalendarDays, Check, ChevronDown, ChevronRight, CircleHelp, Clock3, Code2, Download, Grid2X2, Heart, History, LayoutDashboard, Menu, Moon, Pill, Plus, Radio, RefreshCw, Settings, ShieldCheck, Sun, Sunrise, Sunset, Trash2, Wifi, X} from 'lucide-react';
-import {smartmed, DATA_MODE} from './api/smartmed';
-import {clockLabel, eventTime, exportCsv, minutes, slotMedicines, slotStatus, validateSlots, zonedParts} from './model';
+import {ArrowRight, Bell, Check, ChevronDown, Clock3, Download, History, Moon, Pill, Plus, RefreshCw, Sunrise, Sun, Sunset, Trash2, X} from 'lucide-react';
+import {smartmed, DATA_MODE} from './api/smartmed.js';
+import {clockLabel, eventTime, exportCsv, minutes, slotMedicines, validateSlots, zonedParts} from './model.js';
 import './styles.css';
-
-const SLOT_ICONS = {morning: Sunrise, afternoon: Sun, evening: Sunset, night: Moon};
-const PAGE_COPY = {
-  Today: 'The right reminder. A clearly labelled compartment. A little less worry.',
-  'Medication schedule': 'Group prescribed medicines into morning, afternoon, evening, and night.',
-  'Box history': 'Whole-box opening records. Medicine selection and intake are not verified.',
-  'My device': 'One shared lid, one ultrasonic sensor, four guiding LEDs, and one buzzer.',
-  'Care circle': 'The people who make everyday care feel a little easier.',
-  Settings: 'Personalize the daily routine and shared-lid sensor preferences.',
-  'ESP32 connection': 'Connection placeholders for your Spring Boot backend and ESP32 firmware.',
-};
-const DEMO = DATA_MODE === 'demo';
+const ICONS = {morning: Sunrise, afternoon: Sun, evening: Sunset, night: Moon};
+const LOCAL = DATA_MODE === 'local';
 function App() {
   const [workspace, setWorkspace] = useState(null);
   const [page, setPage] = useState('Today');
   const [now, setNow] = useState(new Date());
-  const [selectedSlot, setSelectedSlot] = useState(null);
+  const [expanded, setExpanded] = useState(null);
   const [modal, setModal] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [saveError, setSaveError] = useState('');
   const [toast, setToast] = useState('');
-  const [menu, setMenu] = useState(false);
-  const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState('all');
-  const [notifications, setNotifications] = useState(false);
-  const [lastFetch, setLastFetch] = useState(null);
-  const toastTimer = useRef();
-  const loading = useRef(false);
-  const writing = useRef(false);
-
+  const generation = useRef(0), writing = useRef(false), loading = useRef(false), timer = useRef();
   async function refresh() {
-    if (loading.current || writing.current) return;
+    if (writing.current || loading.current) return;
+    const current = generation.current;
     loading.current = true;
-    try {setWorkspace(await smartmed.load()); setLastFetch(new Date()); setError('');}
-    catch (e) {setError(e.message);}
+    try {const data = await smartmed.load(); if (current === generation.current) {setWorkspace(data); setLoadError('');}}
+    catch(e) {if (current === generation.current) setLoadError(e.message);}
     finally {loading.current = false;}
   }
   useEffect(() => {
     refresh();
     const clock = setInterval(() => setNow(new Date()), 15000);
-    const polling = !DEMO ? setInterval(refresh, 10000) : null;
-    return () => {clearInterval(clock); clearInterval(polling); clearTimeout(toastTimer.current);};
+    const polling = LOCAL ? null : setInterval(refresh, 10000);
+    return () => {clearInterval(clock); clearInterval(polling); clearTimeout(timer.current);};
   }, []);
-  function notify(message) {setToast(message); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToast(''), 5000);}
-  async function mutate(action, message, close = false) {
+  function notify(message) {setToast(message); clearTimeout(timer.current); timer.current = setTimeout(() => setToast(''), 5000);}
+  function openModal(value) {setSaveError(''); setModal(value);}
+  async function mutate(action, message) {
     if (writing.current) return;
-    writing.current = true; setBusy(true);
-    try {
-      await action();
-      // GET after a mutation returns the authoritative snapshot, not optimistic fake device data.
-      setWorkspace(await smartmed.load()); setLastFetch(new Date()); setError('');
-      if (close) setModal(null);
-      notify(message);
-    } catch (e) {setError(e.message);}
+    writing.current = true; generation.current++; setBusy(true); setSaveError('');
+    try {await action();}
+    catch(e) {setSaveError(e.message); writing.current = false; setBusy(false); return;}
+    setModal(null); notify(message);
+    try {setWorkspace(await smartmed.load()); setLoadError('');}
+    catch {setLoadError('Your changes were saved, but this view could not refresh. Please reload your schedule.');}
     finally {writing.current = false; setBusy(false);}
   }
-  function navigate(next) {setPage(next); setMenu(false); setQuery(''); setFilter('all'); setNotifications(false);}
-  const nav = [['Today', LayoutDashboard], ['Medication schedule', CalendarDays], ['Box history', History], ['My device', Grid2X2], ['Care circle', Heart], ['ESP32 connection', Code2]];
-  const settings = workspace?.settings;
-  const timezone = settings?.timezone || 'Asia/Kolkata';
-  const today = zonedParts(now, timezone);
-  const slots = workspace ? [...workspace.slots].sort((a, b) => minutes(a.time) - minutes(b.time)) : [];
-  const activeSlots = slots.filter(s => slotMedicines(workspace, s.id).length);
-  const dueSlot = activeSlots.find(s => status(s) === 'Due now');
-  const nextSlot = dueSlot || activeSlots.find(s => minutes(s.time) > today.minute) || activeSlots[0];
-  const focusedSlot = slots.find(s => s.id === selectedSlot) || nextSlot || slots[0];
-  const todayOpenings = workspace?.events.filter(e => e.type === 'BOX_OPENED' && zonedParts(e.occurredAt, timezone).date === today.date) || [];
-  const online = workspace?.device.online && !error;
-  function status(slot) {
-    if (DEMO) return slotStatus(workspace, slot, now);
-    // ESP32 CONNECTION PLACEHOLDER: statuses are reconciled by the backend, never guessed from online state.
-    if (error) return 'Awaiting sync';
-    return workspace.dailyStatuses?.date === today.date ? workspace.dailyStatuses.bySlot?.[slot.id] || 'Awaiting sync' : 'Awaiting sync';
-  }
+  const zone = workspace?.settings.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const today = zonedParts(now, zone);
+  const slots = workspace ? workspace.slots : [];
+  const scheduled = slots.filter(s => s.time && slotMedicines(workspace, s.id).length).sort((a,b) => minutes(a.time) - minutes(b.time));
+  const currentSlot = scheduled.find(s => today.minute >= minutes(s.time) && today.minute <= minutes(s.time) + workspace.settings.grace);
+  const nextSlot = currentSlot || scheduled.find(s => minutes(s.time) > today.minute);
+  const defaultExpanded = nextSlot?.id || scheduled[0]?.id;
+  const connected = !LOCAL && !loadError && workspace?.device?.online === true && Number.isFinite(Date.parse(workspace.device.lastSeen)) && now.getTime() - Date.parse(workspace.device.lastSeen) >= 0 && now.getTime() - Date.parse(workspace.device.lastSeen) < 90000;
+  const events = workspace ? [...workspace.events].sort((a,b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt)) : [];
+  const hasMedicines = Boolean(workspace?.medicines.length);
   function download() {
-    const url = URL.createObjectURL(new Blob([exportCsv(workspace.events, timezone)], {type: 'text/csv;charset=utf-8'}));
+    const url = URL.createObjectURL(new Blob([exportCsv(events, zone)], {type:'text/csv;charset=utf-8'}));
     const a = document.createElement('a'); a.href = url; a.download = 'smartmed-box-history.csv'; a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000); notify('Loaded box history exported');
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   return <div className="app">
-    {menu && <button className="nav-scrim" aria-label="Close navigation" onClick={() => setMenu(false)}/>}
-    <aside className={'sidebar ' + (menu ? 'open' : '')}>
-      <a className="brand" href="#" onClick={e => {e.preventDefault(); navigate('Today');}}><span className="brand-symbol"><Pill size={24}/></span>smart<span>med</span></a>
-      <div className="workspace-label">CARE, CONNECTED</div>
-      <nav aria-label="Main navigation">{nav.map(([label, Icon]) => <button key={label} aria-current={page === label ? 'page' : undefined} className={'nav ' + (page === label ? 'active' : '')} onClick={() => navigate(label)}><Icon size={18}/>{label}</button>)}</nav>
-      <div className="sidebar-bottom">
-        <div className="support-card"><div className="support-icon"><ShieldCheck size={22}/></div><strong>One box. A simpler routine.</strong><p>Four daily time slots.<br/>A gentle reminder for each.</p><button onClick={() => setModal({type: 'help'})}>How it works <ArrowUpRight size={14}/></button></div>
-        <button className={'nav ' + (page === 'Settings' ? 'active' : '')} onClick={() => navigate('Settings')}><Settings size={18}/>Settings</button>
-        <div className="profile"><div className="avatar">{initials(settings?.caregiver || 'Caregiver')}</div><div><strong>{settings?.caregiver || 'Caregiver'}</strong><span>{DEMO ? 'Demo care workspace' : 'Care workspace'}</span></div><button aria-label="Care profile" onClick={() => navigate('Care circle')}><ChevronDown size={16}/></button></div>
-      </div>
-    </aside>
-    <div className="main-wrap">
-      <header><div className="breadcrumb"><button className="mobile-menu" aria-label="Open navigation" onClick={() => setMenu(!menu)}><Menu/></button><span>Workspace</span><ChevronRight size={14}/><strong>{page}</strong></div><div className="header-right"><span className="demo-badge"><span/>{DEMO ? 'Demo · Sample data' : 'Backend mode'}</span><button className="notification-button" aria-label="View reminder summary" onClick={() => setNotifications(!notifications)}><Bell size={19}/></button><div className="avatar small">{initials(settings?.caregiver || 'Caregiver')}</div></div>
-        {notifications && <div className="notification-popover"><div className="section-heading"><strong>Reminder summary</strong><button aria-label="Close reminder summary" onClick={() => setNotifications(false)}><X size={17}/></button></div><p>{dueSlot ? `${dueSlot.label} reminder: see the scheduled medicines on Today.` : 'No reminder window is currently active.'}</p><p>No SMS or email alerts are sent by this frontend. A box opening does not verify the selected medicine.</p><button className="text-button" onClick={() => navigate('Today')}>See today’s routine <ArrowRight size={14}/></button></div>}
-      </header>
-      <main>
-        <div className="page-heading"><div><div className="eyebrow">{page === 'Today' ? 'A LITTLE CARE GOES A LONG WAY' : 'YOUR CONNECTED CARE WORKSPACE'}</div><h1>{page === 'Today' ? 'Your daily medicine companion' : page}<span className="heading-dot">.</span></h1><p>{PAGE_COPY[page]}</p></div><div className="heading-actions">{workspace && <button className="secondary" onClick={() => setModal({type: 'times'})}><Clock3 size={15}/> Edit times</button>}{workspace && <button className="primary" onClick={() => setModal({type: 'medicine'})}><Plus size={16}/> Add medicine</button>}</div></div>
-        {error && <div className="error-banner" role="alert"><span>{error}</span><button className="secondary" onClick={refresh}><RefreshCw size={14}/> Retry connection</button></div>}
-        {!workspace ? <section className="panel empty-state"><Radio size={28}/><h2>{error ? 'Workspace unavailable' : 'Loading your workspace…'}</h2><p>{error ? 'Live mode needs a working backend. No sample records are substituted.' : 'Preparing your daily routine.'}</p></section> : <>
-          <div className="patient-strip"><div className="patient-id"><div className="patient-avatar">{initials(settings.patient)}</div><div><span>DAILY ROUTINE FOR</span><strong>{settings.patient}<span className="patient-tag">{DEMO ? 'Sample profile' : 'Patient'}</span></strong></div></div><div className="strip-divider"/><div className="device-connected"><span className={'live-dot ' + (!online ? 'offline' : '')}/><div><strong>{DEMO ? 'Shared-lid box · Demo' : online ? 'Device reporting online' : 'Device offline or data unavailable'}</strong><span>1 sensor · 4 LEDs · 1 shared buzzer</span></div></div><span className="patient-date">{now.toLocaleDateString('en-US', {timeZone: timezone, month: 'short', day: 'numeric'})} · {timezone}</span></div>
-          {page === 'Today' && <>
-            <div className="info-banner whole-box-note"><ShieldCheck size={17}/><span><strong>The sensor detects the shared lid only.</strong> It cannot identify which compartment or medicine was selected. Follow the labelled time slot and prescribed list below.</span></div>
-            <div className="stats-grid"><Stat label="Daily time slots" value={activeSlots.length} sub="With medicines scheduled" icon={CalendarDays} color="green"/><Stat label="Scheduled medicines" value={workspace.medicines.length} sub="Across the daily routine" icon={Pill} color="orange"/><Stat label="Box openings today" value={todayOpenings.length} sub="Whole-box access only" icon={History} color="purple"/><Stat label="Shared lid" value={online ? (workspace.device.lidState === 'OPEN' ? 'Open' : workspace.device.lidState === 'CLOSED' ? 'Closed' : 'Unknown') : 'Unknown'} sub={DEMO ? 'Simulated sensor state' : 'Latest device report'} icon={Radio} color="blue"/></div>
-            <div className="patient-layout">
-              <section className="panel patient-dose"><div className="section-heading"><div><div className="eyebrow">{focusedSlot?.id === dueSlot?.id ? 'YOUR CURRENT REMINDER' : 'YOUR MEDICINE GUIDE'}</div><h2>{focusedSlot ? focusedSlot.label + ' medicines' : 'Your daily routine'}</h2><p>Choose only the medicines listed for this time slot.</p></div>{focusedSlot && <span className={'slot-label ' + focusedSlot.color}><SlotIcon slot={focusedSlot.id}/>{clockLabel(focusedSlot.time)}</span>}</div>
-                <div className="time-slot-picker" role="group" aria-label="Choose daily time slot">{slots.map(slot => <button key={slot.id} className={(focusedSlot?.id === slot.id ? 'chosen ' : '') + slot.color} aria-pressed={focusedSlot?.id === slot.id} onClick={() => setSelectedSlot(slot.id)}><SlotIcon slot={slot.id}/><span>{slot.label}</span><small>{clockLabel(slot.time)}</small></button>)}</div>
-                {focusedSlot && <><div className="dose-location"><span className={'slot-indicator ' + focusedSlot.color}/><div><strong>Use the compartment labelled {focusedSlot.label.toUpperCase()}</strong><span>{status(focusedSlot)} · The LED guides you; selection is not verified.</span></div></div><div className="dose-medicines">{slotMedicines(workspace, focusedSlot.id).map(m => <div key={m.id} className="dose-medicine"><span className={'medicine-icon ' + focusedSlot.color}><Pill size={23}/></span><div><strong>{m.name} <span>{m.strength}</span></strong><p>{m.instructions}</p></div><span className="quantity-pill">{m.quantity}</span></div>)}{!slotMedicines(workspace, focusedSlot.id).length && <div className="empty-state">No medicines scheduled for {focusedSlot.label.toLowerCase()}.<br/>A caregiver can add a prescribed medicine to this slot.</div>}</div></>}
-                <div className="panel-footnote"><CircleHelp size={15}/>{DEMO ? 'Illustrative medicines only. Replace them with the prescribed routine before use.' : 'Follow the entered prescription. Opening the box does not confirm intake.'}</div>
-              </section>
-              <section className="panel daily-timeline"><div className="section-heading"><div><h2>Today, at a glance</h2><p>One clear routine, four parts of the day.</p></div><CalendarDays size={19}/></div>{slots.map(slot => <button className={'daily-slot ' + (focusedSlot?.id === slot.id ? 'selected' : '')} key={slot.id} onClick={() => setSelectedSlot(slot.id)}><span className={'slot-icon ' + slot.color}><SlotIcon slot={slot.id}/></span><div><strong>{slot.label}<span>{clockLabel(slot.time)}</span></strong><small>{slotMedicines(workspace, slot.id).length} medicine{slotMedicines(workspace, slot.id).length === 1 ? '' : 's'}</small><Status value={status(slot)}/></div><ChevronRight size={15}/></button>)}<div className="panel-footnote"><Clock3 size={14}/> Opening context is based on reminder time only.</div></section>
-            </div>
-            <div className="lower-grid"><section className="panel device-panel"><div className="section-heading"><div><h2>Your daily medicine box</h2><p>One shared lid. Four clearly labelled sections.</p></div><button className="text-button" onClick={() => navigate('My device')}>View device <ArrowRight size={14}/></button></div><div className="shared-box"><div className="shared-lid-label"><Radio size={13}/> ONE LID · WHOLE-BOX SENSOR</div><div className="box-sections">{slots.map(slot => <button className={(focusedSlot?.id === slot.id ? 'box-section highlighted ' : 'box-section ') + slot.color} key={slot.id} onClick={() => setSelectedSlot(slot.id)}><SlotIcon slot={slot.id} size={23}/><strong>{slot.label}</strong><small>{clockLabel(slot.time)}</small><span className="led-dot"/></button>)}</div></div><div className="device-footer"><Bell size={14}/> One external buzzer for all reminders<span className="muted">{DEMO ? 'Illustration, not live LED status' : 'Guidance illustration'}</span></div></section><section className="panel activity-panel"><div className="section-heading"><div><h2>Recent box activity</h2><p>What the shared-lid sensor can tell us.</p></div><button className="icon-button" aria-label="View box history" onClick={() => navigate('Box history')}><ArrowUpRight size={18}/></button></div>{workspace.events.length ? workspace.events.slice(0, 3).map(e => <div className="activity-item" key={e.id}><span className="activity-icon"><History size={14}/></span><div><strong>{e.type === 'BOX_OPENED' ? 'Box opened' : 'Box closed'}</strong><span>{e.reminderContext ? `During ${e.reminderContext.label.toLowerCase()} reminder` : 'No reminder association'} · {e.source}</span></div><time>{eventTime(e.occurredAt, timezone)}</time></div>) : <div className="empty-state compact"><History size={23}/><p>No box events yet.</p><span>{DEMO ? 'Try opening the demo lid on My device.' : 'Waiting for your first device event.'}</span></div>}<button className="activity-link text-button" onClick={() => navigate('Box history')}>See all box events <ArrowRight size={14}/></button></section></div>
-            <div className="care-note"><Heart size={15}/><span>Ask your caregiver to refill the four time slots each day.</span><span>Care, connected.</span></div>
+    <header className="app-header"><div className="header-inner"><a className="brand" href="#" onClick={e=>{e.preventDefault();setPage('Today');}}><span className="brand-mark"><Pill size={22}/></span>smart<span>med</span></a><nav aria-label="Main navigation">{['Today','Schedule','History'].map(label=><button key={label} aria-current={page===label?'page':undefined} onClick={()=>setPage(label)}>{label}</button>)}</nav><span className="header-tag">Your daily routine</span></div></header>
+    <main>
+      <div className="page-heading"><div><div className="eyebrow">{now.toLocaleDateString('en-US',{timeZone:zone,weekday:'long',month:'long',day:'numeric'})}</div><h1>{page==='Today'?'A simpler medicine routine.':page==='Schedule'?'Your medication schedule.':'Box-opening history.'}</h1><p>{page==='Today'?'See what is scheduled and which section to use.':page==='Schedule'?'Add only the medicines and instructions on your prescription.':'A record of when your medicine box was opened.'}</p></div>{workspace && page==='Schedule' && <button className="primary" onClick={()=>openModal({type:'medicine'})}><Plus size={17}/>Add medicine</button>}</div>
+      {loadError && <div className="error-banner" role="alert"><span>{loadError}</span><button onClick={refresh}><RefreshCw size={15}/>Try again</button></div>}
+      {!workspace ? <section className="empty-state"><Clock3 size={29}/><h2>{loadError?'Your schedule is unavailable':'Loading your schedule…'}</h2><p>{loadError?'Your saved information has not been replaced. Please try again.':'This will only take a moment.'}</p></section> : <>
+        {LOCAL && <div className="storage-notice"><span className="notice-dot"/><span>Saved on this browser only. Automatic reminders and box history are not connected.</span></div>}
+        {page==='Today' && <>
+          {!hasMedicines ? <section className="welcome-card"><span className="welcome-icon"><Pill size={34}/></span><span className="eyebrow">ONE DAY, FOUR SIMPLE MOMENTS</span><h2>Start with your first medicine.</h2><p>Add your prescribed medicines to Morning, Afternoon, Evening, or Night. Your daily list will appear here.</p><button className="primary" onClick={()=>openModal({type:'medicine'})}><Plus size={17}/>Add your first medicine</button><div className="welcome-slots">{slots.map(s=>{const Icon=ICONS[s.id];return <span key={s.id}><Icon size={18}/>{s.label}</span>;})}</div></section> : <>
+            <section className="next-reminder"><span className="reminder-icon"><Bell size={23}/></span><div><span className="eyebrow">{currentSlot?'SCHEDULED NOW':nextSlot?'NEXT TODAY':'TODAY’S REMINDERS'}</span><h2>{nextSlot?`${nextSlot.label} · ${clockLabel(nextSlot.time)}`:'No more scheduled reminders today'}</h2><p>{nextSlot?'Use the section with the matching label.':'You can still review today’s medicine list below.'}</p></div>{nextSlot && <button className="text-button" onClick={()=>setExpanded(nextSlot.id)}>View medicines <ArrowRight size={16}/></button>}</section>
+            <div className="section-label"><h2>Today’s medicines</h2><span>{zone}</span></div>
+            <div className="day-slots">{slots.map(slot=>{
+              const list=slotMedicines(workspace,slot.id), Icon=ICONS[slot.id];
+              const isOpen=(expanded ?? defaultExpanded)===slot.id;
+              return <section className={'day-slot '+(nextSlot?.id===slot.id?'is-next':'')} key={slot.id}><button className="slot-heading" aria-expanded={isOpen} aria-controls={'slot-'+slot.id} onClick={()=>setExpanded(isOpen?'none':slot.id)}><span className={'slot-icon '+slot.id}><Icon size={22}/></span><div><strong>{slot.label}</strong><span>{list.length?clockLabel(slot.time):'Nothing scheduled'}</span></div><span className="slot-summary">{list.length?`${list.length} medicine${list.length===1?'':'s'}`:''}</span><ChevronDown className={isOpen?'rotated':''} size={18}/></button>{isOpen && <div id={'slot-'+slot.id} className="slot-content">{list.length ? <>{list.map(m=><MedicineRow key={m.id} medicine={m}/>)}<div className="slot-instruction">Use the compartment labelled <strong>{slot.label.toUpperCase()}</strong>.</div></> : <p className="slot-empty">No medicines added for {slot.label.toLowerCase()}.</p>}</div>}</section>;
+            })}</div>
           </>}
-          {page === 'Medication schedule' && <section className="panel"><div className="section-heading"><div><h2>Four slots, one daily routine</h2><p>Multiple medicines can share a slot. Its reminder time applies to all of them.</p></div><span className="badge pending">Daily refill</span></div><div className="toolbar"><label className="search"><span className="sr-only">Search medicines</span><Pill size={16}/><input placeholder="Search medicines…" value={query} onChange={e => setQuery(e.target.value)}/></label><select aria-label="Filter by time slot" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All time slots</option>{slots.map(s => <option value={s.id} key={s.id}>{s.label}</option>)}</select></div>{slots.filter(s => filter === 'all' || s.id === filter).map(slot => <div className="schedule-group" key={slot.id}><div className="schedule-group-heading"><span className={'slot-icon ' + slot.color}><SlotIcon slot={slot.id}/></span><h3>{slot.label}<small>{clockLabel(slot.time)}</small></h3><button className="text-button" onClick={() => setModal({type: 'medicine', slotId: slot.id})}><Plus size={13}/>Add to {slot.label.toLowerCase()}</button></div>{slotMedicines(workspace, slot.id).filter(m => `${m.name} ${m.strength}`.toLowerCase().includes(query.toLowerCase())).map(m => <div className="schedule-medicine" key={m.id}><div><strong>{m.name} <span>{m.strength}</span></strong><p>{m.instructions}</p></div><span className="quantity-pill">{m.quantity}</span><button className="text-button" aria-label={'Edit ' + m.name} onClick={() => setModal({type: 'medicine', medicine: m})}>Edit</button><button className="delete-button" aria-label={'Remove ' + m.name} onClick={() => setModal({type: 'delete', medicine: m})}><Trash2 size={16}/></button></div>)}{!slotMedicines(workspace, slot.id).filter(m => `${m.name} ${m.strength}`.toLowerCase().includes(query.toLowerCase())).length && <p className="slot-empty">{query ? 'No matching medicines in this slot.' : 'No medicines assigned. Add only what is prescribed for this time.'}</p>}</div>)}<div className="panel-footnote"><ShieldCheck size={15}/> One sensor records whole-box access. These are scheduled medicines, not verified selections.</div></section>}
-          {page === 'Box history' && <section className="panel"><div className="section-heading"><div><h2>Shared-lid access history</h2><p>Reminder context shows when the box opened, not which medicine was picked.</p></div><button className="secondary" onClick={download}><Download size={15}/> Export CSV</button></div><div className="toolbar"><label className="search"><span className="sr-only">Search box history</span><History size={16}/><input placeholder="Search event or reminder…" value={query} onChange={e => setQuery(e.target.value)}/></label><span className="muted">{workspace.events.length} loaded events</span></div><div className="table-scroll"><table><thead><tr><th>Event</th><th>When ({timezone})</th><th>Reminder context</th><th>Selection / intake</th><th>Source</th></tr></thead><tbody>{workspace.events.filter(e => `${e.type} ${e.reminderContext?.label || 'unscheduled'}`.toLowerCase().replaceAll('_', ' ').includes(query.toLowerCase())).map(e => <tr key={e.id}><td><strong>{e.type === 'BOX_OPENED' ? 'Box opened' : 'Box closed'}</strong></td><td>{eventTime(e.occurredAt, timezone)}</td><td>{e.reminderContext ? <><span className="slot-label">{e.reminderContext.label} reminder</span><small>Time association only</small></> : 'Outside a reminder window'}</td><td><span className="badge pending">Not verified</span></td><td>{e.source}</td></tr>)}</tbody></table></div>{!workspace.events.filter(e => `${e.type} ${e.reminderContext?.label || 'unscheduled'}`.toLowerCase().replaceAll('_', ' ').includes(query.toLowerCase())).length && <div className="empty-state"><History size={27}/><h2>No matching box events</h2><p>{DEMO ? 'Use My device to simulate opening and closing the shared lid.' : 'Events will appear when received from the ESP32.'}</p></div>}<div className="panel-footnote"><CircleHelp size={15}/> Export contains loaded records only. The backend must provide pagination for a complete long-term history.</div></section>}
-          {page === 'My device' && <>
-            <div className="device-banner panel"><div className="device-banner-icon"><Grid2X2 size={34}/></div><div><h2>SmartMed Home</h2><p>{workspace.device.id} · ESP32 · One shared lid</p></div><span className={'badge ' + (online ? 'success' : 'pending')}>{DEMO ? (online ? 'Demo online' : 'Demo offline') : (online ? 'Reporting online' : 'Offline / stale')}</span>{DEMO && <button className="secondary" disabled={busy} onClick={() => mutate(() => smartmed.simulate('toggleConnection'), 'Demo connectivity updated')}>{workspace.device.online ? 'Simulate disconnect' : 'Reconnect demo'}</button>}</div>
-            <div className="device-layout"><section className="panel shared-sensor"><div className="section-heading"><div><h2>Shared-lid ultrasonic sensor</h2><p>Only one sensor for the whole box.</p></div><Radio size={23}/></div><div className={'sensor-dial ' + (!online ? 'unavailable' : '')}><Radio size={40}/><strong>{online && workspace.device.distanceCm != null ? workspace.device.distanceCm + ' cm' : '—'}</strong><span>{online ? workspace.device.lidState : 'UNKNOWN'} · {DEMO ? 'SIMULATED' : 'REPORTED'}</span></div><div className="sensor-readout"><span>Opening threshold increase<strong>+{settings.threshold} cm</strong></span><span>Required stable reading<strong>{settings.stability} ms</strong></span><span>Last device contact<strong>{workspace.device.lastSeen ? eventTime(workspace.device.lastSeen, timezone) : 'No real device contact'}</strong></span></div>{DEMO && <div className="simulation-actions"><button className="primary" disabled={busy || !workspace.device.online || workspace.device.lidState === 'OPEN'} onClick={() => mutate(() => smartmed.simulate('open'), 'Whole-box opening recorded. Medicine selection is not verified.')}><ArrowUpRight size={16}/> Simulate box opening</button><button className="secondary" disabled={busy || !workspace.device.online || workspace.device.lidState === 'CLOSED'} onClick={() => mutate(() => smartmed.simulate('close'), 'Shared lid closed; detection rearmed')}>Close demo lid</button></div>}<div className="panel-footnote"><ShieldCheck size={15}/> Invalid or missing echoes must be reported as unknown, not automatically open.</div></section>
-              <section className="panel"><div className="section-heading"><div><h2>Reminder outputs</h2><p>LEDs identify the slot. One external buzzer alerts.</p></div><Bell size={20}/></div><div className="output-list">{slots.map(slot => <div key={slot.id}><span className={'slot-icon ' + slot.color}><SlotIcon slot={slot.id}/></span><div><strong>{slot.label} LED</strong><small>{clockLabel(slot.time)}</small></div><Status value={DEMO ? 'Not connected' : online ? workspace.device.ledSlotId === slot.id ? 'Blinking' : 'Off' : 'Unknown'}/></div>)}<div><span className="slot-icon green"><Bell size={19}/></span><div><strong>Shared external buzzer</strong><small>One alarm for the entire box</small></div><Status value={DEMO ? 'Not connected' : online ? workspace.device.buzzerActive ? 'Sounding' : 'Off' : 'Unknown'}/></div></div><div className="panel-footnote"><Clock3 size={15}/> Configuration: {DEMO ? 'Local demo only' : workspace.device.desiredConfigVersion === workspace.device.appliedConfigVersion ? 'Applied on device' : 'Pending device sync'}</div></section>
-            </div><div className="info-banner"><Radio size={17}/><span>Mount the sensor so lid movement gives repeatable readings. Calibrate the physical box before setting thresholds. Only a whole-box opening is measurable in this design.</span></div>
-          </>}
-          {page === 'Care circle' && <><div className="care-hero"><span className="care-heart"><Heart size={30}/></span><div><h2>Good care is a team effort.</h2><p>Prepare the right dose. Make the next step clear.</p></div></div><div className="care-grid"><section className="panel person-card"><div className="avatar large">{initials(settings.patient)}</div><span className="eyebrow">PATIENT</span><h2>{settings.patient}</h2><p>Follows the time-slot label and medicine list on Today.</p><div className="person-detail"><Pill size={16}/>{workspace.medicines.length} medicine entries · {activeSlots.length} daily slots</div></section><section className="panel person-card"><div className="avatar large lavender">{initials(settings.caregiver)}</div><span className="eyebrow">CAREGIVER</span><h2>{settings.caregiver}</h2><p>Loads the four slots daily according to the prescription.</p><div className="person-detail"><ShieldCheck size={16}/>Reviews whole-box opening records</div></section></div><div className="info-banner"><Heart size={18}/><span>{DEMO ? 'These are editable sample profiles, not authenticated accounts. ' : ''}Keep daily refills supervised. This design cannot verify medicine identity, quantity removed, or swallowing.</span></div></>}
-          {page === 'Settings' && <SettingsForm key={JSON.stringify(settings)} settings={settings} busy={busy} onSave={value => mutate(() => smartmed.saveSettings(value), DEMO ? 'Preferences saved in this browser' : 'Preferences saved; device changes await acknowledgment')}/>}
-          {page === 'ESP32 connection' && <section className="panel connection-panel"><div className="section-heading"><div><h2>Ready for your hardware team</h2><p>The browser talks to your backend. The ESP32 sends telemetry to that backend.</p></div><Code2 size={23}/></div><div className="connection-flow"><span>React dashboard</span><ArrowRight size={17}/><span>Spring Boot API</span><ArrowRight size={17}/><span>ESP32 + Wi-Fi</span></div><div className="connection-steps"><article><span>01</span><div><h3>Configure the public API URL</h3><p>Copy <code>.env.example</code> to <code>.env.local</code>. Keep demo mode until the backend is ready. Restart Vite after changes.</p><pre>VITE_DATA_MODE=live{'\n'}VITE_API_BASE_URL=https://YOUR-BACKEND/api/v1</pre></div></article><article><span>02</span><div><h3>Implement the adapter endpoints</h3><p>Look for <code>ESP32 CONNECTION PLACEHOLDER</code> in <code>src/api/smartmed.js</code>. Connect workspace loading, schedules, and settings. Live mode reports failures without substituting demo data.</p></div></article><article><span>03</span><div><h3>Publish whole-box events from firmware</h3><p>Send <code>BOX_OPENED</code> and <code>BOX_CLOSED</code> with unique event IDs and UTC timestamps to Spring Boot. Send no detected-compartment ID: one lid cannot provide it.</p></div></article><article><span>04</span><div><h3>Follow the connection contract</h3><p>See <code>docs/ESP32_CONNECTION.md</code> for exact API shapes and <code>docs/HARDWARE_WIRING.md</code> for the updated single-sensor wiring. Keep device credentials out of frontend code.</p></div></article></div><div className="panel-footnote"><Wifi size={15}/>Current mode: {DATA_MODE}. {DEMO ? 'No requests are sent to a real device or backend.' : 'Workspace refreshes every 10 seconds.'} Last workspace fetch: {lastFetch ? eventTime(lastFetch, timezone) : 'None'}.</div></section>}
+          <p className="quiet-note">Refill the four sections each day according to the prescription. Opening the box does not confirm medicine intake.</p>
         </>}
-      </main>
-      <footer><span>© {now.getFullYear()} SmartMed. Care, connected.</span><span><ShieldCheck size={13}/>{DEMO ? 'Sample medicines · No live device' : 'Box access ≠ verified intake'}</span></footer>
-    </div>
-    {modal && workspace && <Modal busy={busy} onClose={() => {if (!busy) setModal(null);}} title={modal.type === 'medicine' ? 'Medicine details' : modal.type === 'times' ? 'Daily reminder times' : 'SmartMed'}>
-      {modal.type === 'help' && <><span className="modal-symbol"><Heart size={24}/></span><h2>One box. Four daily moments.</h2><p>A caregiver prepares the morning, afternoon, evening, and night sections each day. At reminder time, the matching LED blinks and the shared external buzzer sounds.</p><p>Use Today to see which medicines and quantities are scheduled. One ultrasonic sensor detects the shared lid opening; it cannot tell which medicine was selected or taken.</p><div className="info-banner">{DEMO ? 'This is a local demo. Real alarms, account access, and remote notifications require backend and firmware integration.' : 'Local alarms run on ESP32. Dashboard status depends on synchronized backend evidence.'}</div><button className="primary full" onClick={() => setModal(null)}>Got it <Check size={16}/></button></>}
-      {modal.type === 'medicine' && <MedicineForm medicine={modal.medicine} defaultSlotId={modal.slotId} slots={slots} busy={busy} onCancel={() => setModal(null)} onSave={m => mutate(() => smartmed.saveMedicine(m), 'Medicine saved to its daily time slot', true)}/>}
-      {modal.type === 'times' && <TimesForm slots={slots} grace={settings.grace} busy={busy} onCancel={() => setModal(null)} onSave={value => mutate(() => smartmed.saveSlots(value), DEMO ? 'Daily reminder times saved locally' : 'Reminder times saved; waiting for device sync', true)}/>}
-      {modal.type === 'delete' && <><h2>Remove {modal.medicine.name}?</h2><p>This removes the medicine from its daily slot. Existing box opening history is preserved.</p><div className="form-footer"><button className="secondary" disabled={busy} onClick={() => setModal(null)}>Cancel</button><button className="danger" disabled={busy} onClick={() => mutate(() => smartmed.removeMedicine(modal.medicine.id), 'Medicine removed', true)}>Remove medicine</button></div></>}
-      {error && <p className="form-error" role="alert">{error}</p>}
+        {page==='Schedule' && <>
+          <div className="section-label"><h2>Four daily time slots</h2><button className="text-button" onClick={()=>openModal({type:'times'})}><Clock3 size={15}/>Edit reminder times</button></div>
+          <div className="schedule-list">{slots.map(slot=>{const Icon=ICONS[slot.id],list=slotMedicines(workspace,slot.id);return <section className="schedule-slot" key={slot.id}><div className="schedule-slot-heading"><span className={'slot-icon '+slot.id}><Icon size={21}/></span><div><h2>{slot.label}</h2><span>{clockLabel(slot.time)}</span></div><button className="text-button" aria-label={'Add medicine to '+slot.label.toLowerCase()} onClick={()=>openModal({type:'medicine',slotId:slot.id})}><Plus size={16}/><span>Add medicine</span></button></div>{list.map(m=><MedicineRow key={m.id} medicine={m} actions={<><button className="edit-button" aria-label={'Edit '+m.name} onClick={()=>openModal({type:'medicine',medicine:m})}>Edit</button><button className="delete-button" aria-label={'Remove '+m.name} onClick={()=>openModal({type:'remove',medicine:m})}><Trash2 size={15}/></button></>}/>)}{!list.length && <p className="slot-empty">No medicines added.</p>}</section>;})}</div><p className="quiet-note">Medicines in the same time slot share a reminder time. Enter quantities and instructions exactly as prescribed.</p>
+        </>}
+        {page==='History' && <>
+          <div className="history-header"><span className="connection-label"><span className={connected?'connected-dot':'notice-dot'}/>{connected?'Box connected':'Box not connected'}{workspace.device?.lastSeen && <small>Last update {eventTime(workspace.device.lastSeen,zone)}</small>}</span>{events.length>0 && <button className="secondary" onClick={download}><Download size={16}/>Export</button>}</div>
+          {!events.length ? <section className="empty-state history-empty"><span className="welcome-icon"><History size={30}/></span><h2>No box openings recorded yet.</h2><p>{connected?'Opening records will appear here as your box sends them.':'Once your medicine box is connected, its opening records will appear here.'}</p></section> : <section className="history-list">{events.map(e=><article key={e.id}><span className="event-icon"><History size={18}/></span><div><h2>{e.type==='BOX_OPENED'?'Box opened':'Box closed'}</h2><p>{e.reminderContext?`During the ${e.reminderContext.label.toLowerCase()} reminder`:'No associated reminder'}</p></div><time dateTime={e.occurredAt}>{eventTime(e.occurredAt,zone)}</time></article>)}</section>}
+          <p className="quiet-note">The shared lid records box access only. It cannot identify which medicine was selected or whether it was taken.{events.length>0?' Export includes the records currently loaded.':''}</p>
+        </>}
+      </>}
+    </main>
+    <footer><span className="footer-brand">smartmed</span><span>A clearer routine, every day.</span></footer>
+    {modal && workspace && <Modal busy={busy} onClose={()=>{if(!busy)setModal(null);}} title={modal.type==='medicine'?'Medicine details':modal.type==='times'?'Reminder times':'Remove medicine'}>
+      {modal.type==='medicine' && <MedicineForm slots={slots} medicine={modal.medicine} defaultSlotId={modal.slotId} busy={busy} onCancel={()=>setModal(null)} onSave={value=>mutate(()=>smartmed.saveMedicine(value),'Medicine saved')}/>}
+      {modal.type==='times' && <TimesForm workspace={workspace} busy={busy} onCancel={()=>setModal(null)} onSave={value=>mutate(()=>smartmed.saveSlots(value),'Reminder times saved')}/>}
+      {modal.type==='remove' && <><h2>Remove {modal.medicine.name}?</h2><p>It will be removed from your daily schedule. Existing box history will be kept.</p><div className="form-footer"><button className="secondary" disabled={busy} onClick={()=>setModal(null)}>Keep medicine</button><button className="danger" disabled={busy} onClick={()=>mutate(()=>smartmed.removeMedicine(modal.medicine.id),'Medicine removed')}>{busy?'Removing…':'Remove medicine'}</button></div></>}
+      {saveError && <p className="form-error" role="alert">{saveError}</p>}
     </Modal>}
-    {toast && <div className="toast" role="status"><span><Check size={15}/></span>{toast}<button aria-label="Dismiss message" onClick={() => setToast('')}><X size={15}/></button></div>}
+    {toast && <div className="toast" role="status"><Check size={17}/>{toast}<button aria-label="Dismiss message" onClick={()=>setToast('')}><X size={15}/></button></div>}
   </div>;
 }
-function initials(name) {return name.split(' ').filter(Boolean).map(x => x[0]).slice(0, 2).join('');}
-function SlotIcon({slot, size = 19}) {const Icon = SLOT_ICONS[slot] || Clock3; return <Icon size={size}/>;}
-function Status({value}) {return <span className={'badge ' + (['Box opened', 'Off', 'Closed'].includes(value) ? 'success' : value === 'Due now' || value === 'Blinking' ? 'due' : 'pending')}>{value}</span>;}
-function Stat({label, value, sub, icon: Icon, color}) {return <section className="stat-card"><div><span>{label}</span><span className={'stat-icon ' + color}><Icon size={19}/></span></div><strong>{typeof value === 'number' ? String(value).padStart(2, '0') : value}</strong><p>{sub}</p></section>;}
-function Modal({children, title, onClose, busy}) {
-  const ref = useRef();
-  useEffect(() => {
-    const previous = document.activeElement;
-    const focusable = () => [...ref.current.querySelectorAll('button:not(:disabled), input, select, [tabindex="0"]')];
-    (ref.current.querySelector('input') || focusable()[0])?.focus();
-    function keydown(e) {
-      if (e.key === 'Escape' && !busy) onClose();
-      if (e.key === 'Tab') {const elements = focusable(); const first = elements[0], last = elements.at(-1); if (e.shiftKey && document.activeElement === first) {e.preventDefault(); last?.focus();} else if (!e.shiftKey && document.activeElement === last) {e.preventDefault(); first?.focus();}}
-    }
-    document.addEventListener('keydown', keydown);
-    return () => {document.removeEventListener('keydown', keydown); previous?.focus();};
-  }, [busy]);
-  return <div className="modal-backdrop" onClick={onClose}><section ref={ref} className="modal" role="dialog" aria-modal="true" aria-label={title} onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close dialog" disabled={busy} onClick={onClose}><X size={20}/></button>{children}</section></div>;
+function MedicineRow({medicine:m,actions}) {return <div className="medicine-row"><span className="pill-icon"><Pill size={20}/></span><div className="medicine-details"><strong>{m.name}</strong><span>{m.strength}{m.instructions?' · '+m.instructions:''}</span></div><span className="quantity">{m.quantity}</span>{actions && <div className="medicine-actions">{actions}</div>}</div>;}
+function Modal({children,title,busy,onClose}) {
+  const ref=useRef();
+  useEffect(()=>{
+    const previous=document.activeElement;
+    const focusable=()=>[...ref.current.querySelectorAll('button:not(:disabled),input,select')];
+    (ref.current.querySelector('input')||focusable()[0])?.focus();
+    function keydown(e){if(e.key==='Escape'&&!busy)onClose();if(e.key==='Tab'){const list=focusable(),first=list[0],last=list.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}}}
+    document.addEventListener('keydown',keydown);const previousOverflow=document.body.style.overflow;document.body.style.overflow='hidden';
+    return()=>{document.removeEventListener('keydown',keydown);document.body.style.overflow=previousOverflow;previous?.focus();};
+  },[busy]);
+  return <div className="modal-backdrop" onClick={onClose}><section ref={ref} className="modal" role="dialog" aria-modal="true" aria-label={title} onClick={e=>e.stopPropagation()}><button className="modal-close" aria-label="Close dialog" disabled={busy} onClick={onClose}><X size={20}/></button>{children}</section></div>;
 }
-function MedicineForm({medicine, defaultSlotId, slots, busy, onSave, onCancel}) {
-  const [error, setError] = useState('');
-  return <form onSubmit={e => {e.preventDefault(); const data = Object.fromEntries(new FormData(e.currentTarget)); const cleaned = Object.fromEntries(Object.entries(data).map(([key, value]) => [key, value.trim()])); if (Object.values(cleaned).some(v => !v)) {setError('Complete all medicine details.'); return;} onSave({...cleaned, ...(medicine ? {id: medicine.id} : {})});}}>
-    <span className="modal-symbol"><Pill size={24}/></span><h2>{medicine ? 'Edit medicine' : 'Add to the daily routine'}</h2><p>Multiple prescribed medicines can share a time slot. Enter quantities and instructions from the prescription.</p>
-    <div className="form-grid"><label>Medicine name<input name="name" required maxLength={60} defaultValue={medicine?.name} placeholder="e.g. medicine name"/></label><label>Strength<input name="strength" required maxLength={30} defaultValue={medicine?.strength} placeholder="e.g. 500 mg"/></label><label>Quantity per reminder<input name="quantity" required maxLength={40} defaultValue={medicine?.quantity} placeholder="e.g. 1 tablet"/></label><label>Daily time slot<select name="slotId" defaultValue={medicine?.slotId || defaultSlotId || 'morning'}>{slots.map(s => <option key={s.id} value={s.id}>{s.label} · {clockLabel(s.time)}</option>)}</select></label><label className="span-two">Prescribed instructions<input name="instructions" required maxLength={160} defaultValue={medicine?.instructions} placeholder="e.g. after breakfast, as prescribed"/></label></div>
-    {error && <p className="form-error" role="alert">{error}</p>}<div className="form-footer"><button type="button" className="secondary" disabled={busy} onClick={onCancel}>Cancel</button><button className="primary" disabled={busy} type="submit"><Check size={16}/>{busy ? 'Saving…' : 'Save medicine'}</button></div>
+function MedicineForm({slots,medicine,defaultSlotId,busy,onSave,onCancel}) {
+  const [slotId,setSlotId]=useState(medicine?.slotId||defaultSlotId||'morning');
+  const [time,setTime]=useState(slots.find(s=>s.id===slotId)?.time||'');
+  const [error,setError]=useState('');
+  return <form onSubmit={e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.currentTarget));Object.keys(d).forEach(k=>d[k]=d[k].trim());if(!d.name||!d.strength||!d.quantity||!time){setError('Complete the medicine name, strength, quantity, and reminder time.');return;}try{validateSlots(slots.map(s=>s.id===slotId?{...s,time}:s));setError('');onSave({...d,slotId,reminderTime:time,...(medicine?{id:medicine.id}:{})});}catch(e){setError(e.message);}}}>
+    <span className="modal-icon"><Pill size={24}/></span><h2>{medicine?'Edit medicine':'Add a medicine'}</h2><p>Use the details from your prescription.</p>
+    <div className="form-fields"><label>Medicine name<input name="name" required maxLength={80} defaultValue={medicine?.name} autoComplete="off"/></label><div className="form-grid"><label>Strength<input name="strength" required maxLength={40} defaultValue={medicine?.strength} placeholder="As on the label"/></label><label>Quantity each time<input name="quantity" required maxLength={40} defaultValue={medicine?.quantity} placeholder="As prescribed"/></label></div><div className="form-grid"><label>Part of the day<select value={slotId} onChange={e=>{setSlotId(e.target.value);setTime(slots.find(s=>s.id===e.target.value)?.time||'');}}>{slots.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}</select></label><label>Reminder time<input type="time" required value={time} onChange={e=>setTime(e.target.value)}/></label></div><p className="field-hint">This time applies to all medicines in the {slots.find(s=>s.id===slotId)?.label.toLowerCase()} section.</p><label>Instructions <span className="optional">Optional</span><input name="instructions" maxLength={200} defaultValue={medicine?.instructions} placeholder="From your prescription"/></label></div>
+    {error && <p className="form-error" role="alert">{error}</p>}<div className="form-footer"><button type="button" className="secondary" disabled={busy} onClick={onCancel}>Cancel</button><button type="submit" className="primary" disabled={busy}>{busy?'Saving…':'Save medicine'}</button></div>
   </form>;
 }
-function TimesForm({slots, grace, busy, onSave, onCancel}) {
-  const [error, setError] = useState('');
-  return <form onSubmit={e => {e.preventDefault(); const data = new FormData(e.currentTarget); const next = slots.map(s => ({...s, time: data.get(s.id)})); try {validateSlots(next, grace); setError(''); onSave(next);} catch (e) {setError(e.message);}}}><span className="modal-symbol"><Clock3 size={24}/></span><h2>Four daily reminder times</h2><p>Each time applies to every medicine in that slot. Leave reminder windows far enough apart to avoid ambiguous box-opening associations.</p><div className="form-grid">{slots.map(s => <label key={s.id}>{s.label}<input type="time" name={s.id} required defaultValue={s.time}/></label>)}</div>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-footer"><button className="secondary" type="button" disabled={busy} onClick={onCancel}>Cancel</button><button className="primary" disabled={busy}>{busy ? 'Saving…' : 'Save reminder times'}</button></div></form>;
-}
-function SettingsForm({settings, busy, onSave}) {
-  const [error, setError] = useState('');
-  return <form className="panel settings-panel" onSubmit={e => {e.preventDefault(); const d = new FormData(e.currentTarget); const patient = d.get('patient').trim(), caregiver = d.get('caregiver').trim(); if (!patient || !caregiver) {setError('Enter patient and caregiver names.'); return;} setError(''); onSave({...settings, patient, caregiver, threshold: Number(d.get('threshold')), stability: Number(d.get('stability')), grace: Number(d.get('grace')), repeat: Number(d.get('repeat'))});}}><div className="section-heading"><div><h2>Care and device preferences</h2><p>{DEMO ? 'Saved locally. These settings do not configure real hardware yet.' : 'Device settings remain pending until firmware acknowledges them.'}</p></div></div><h3>Care profile</h3><div className="form-grid"><label>Patient name<input name="patient" required maxLength={60} defaultValue={settings.patient}/></label><label>Caregiver name<input name="caregiver" required maxLength={60} defaultValue={settings.caregiver}/></label></div><p className="muted">Patient schedule timezone: {settings.timezone}. Firmware and backend exchange UTC timestamps.</p><h3>One shared-lid ultrasonic sensor</h3><p className="muted">Use a measured closed-lid baseline for the whole box. The firmware also needs a lower closing threshold and valid-echo checks; calibrate these on real hardware.</p><div className="form-grid"><label>Opening distance increase (cm)<input name="threshold" required type="number" min={1} max={100} step={0.5} defaultValue={settings.threshold}/></label><label>Reading stability window (ms)<input name="stability" required type="number" min={100} max={10000} step={100} defaultValue={settings.stability}/></label></div><h3>Reminder windows</h3><div className="form-grid"><label>Follow-up window (minutes)<input name="grace" required type="number" min={1} max={180} defaultValue={settings.grace}/></label><label>Repeat reminder (minutes)<input name="repeat" required type="number" min={1} max={60} defaultValue={settings.repeat}/></label></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-footer"><span>{DEMO ? 'Local demo · No real alarms or messages' : 'Requires device sync'}</span><button className="primary" disabled={busy}><Check size={16}/>{busy ? 'Saving…' : 'Save preferences'}</button></div></form>;
+function TimesForm({workspace,busy,onSave,onCancel}) {
+  const [error,setError]=useState('');
+  return <form onSubmit={e=>{e.preventDefault();const d=new FormData(e.currentTarget);const slots=workspace.slots.map(s=>({...s,time:d.get(s.id)||null}));try{validateSlots(slots,workspace.settings.grace);if(slots.some(s=>!s.time&&slotMedicines(workspace,s.id).length))throw new Error('Keep a reminder time for every section that has medicines.');setError('');onSave(slots);}catch(e){setError(e.message);}}}><span className="modal-icon"><Clock3 size={24}/></span><h2>Reminder times</h2><p>Choose times that fit your prescribed routine. Unused sections can stay blank.</p><div className="form-fields form-grid">{workspace.slots.map(s=><label key={s.id}>{s.label}<input type="time" name={s.id} defaultValue={s.time||''} required={slotMedicines(workspace,s.id).length>0}/></label>)}</div>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-footer"><button className="secondary" type="button" disabled={busy} onClick={onCancel}>Cancel</button><button className="primary" disabled={busy}>{busy?'Saving…':'Save times'}</button></div></form>;
 }
 createRoot(document.getElementById('root')).render(<App/>);

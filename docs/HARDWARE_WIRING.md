@@ -152,7 +152,7 @@ Check that I²C pull-ups go to 3.3 V, not 5 V. Use the battery type supported by
 
 Aim at a lid surface with adequate clearance. Keep medicine packaging out of the acoustic path and electronics separated from medicines, spills, and cleaning. Test empty, loaded, partly open, and fully open conditions.
 
-Do not assume a missing echo means open. The lid may leave the beam, nearby surfaces may reflect it, or the sensor may be below its valid minimum range. Treat invalid readings as UNKNOWN unless a reliable alternative method is established. Calibrate measured closed/open distances, filter readings, use separate open/close thresholds, and require a stable transition. The example 8 cm/1000 ms dashboard preferences are not measured hardware settings.
+Do not assume a missing echo means open. The lid may leave the beam, nearby surfaces may reflect it, or the sensor may be below its valid minimum range. Treat invalid readings as UNKNOWN unless a reliable alternative method is established. Calibrate measured closed/open distances, filter readings, use separate open/close thresholds, and require a stable transition. Choose thresholds from measured enclosure readings and keep them in protected firmware/backend configuration; the patient app does not expose calibration settings.
 
 If one ultrasonic sensor cannot reliably distinguish the lid states in the chosen enclosure, revise its placement or sensing method before building the final box. The frontend event format can stay the same.
 

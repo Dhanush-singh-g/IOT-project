@@ -1,82 +1,61 @@
-import {createDemoWorkspace, STORAGE_KEY, reminderContext, validateSlots} from '../model.js';
+import {createWorkspace, STORAGE_KEY, validateSlots, validateWorkspace} from '../model.js';
 
-// ESP32 CONNECTION PLACEHOLDER 1:
-// Set VITE_DATA_MODE=live and VITE_API_BASE_URL in .env.local AFTER your backend exists.
-// The browser calls Spring Boot. Only Spring Boot accepts authenticated ESP32 telemetry.
+// ESP32 CONNECTION PLACEHOLDER: the browser calls your backend, never the board directly.
+// Local mode starts empty and stores only user-entered schedules. It cannot create sensor events.
 const environment = import.meta.env || {};
-export const DATA_MODE = environment.VITE_DATA_MODE === 'live' ? 'live' : 'demo';
+export const DATA_MODE = environment.VITE_DATA_MODE === 'live' ? 'live' : 'local';
 const BASE_URL = (environment.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '');
-let demoMemory;
-function readDemo() {
-  if (demoMemory) return structuredClone(demoMemory);
-  const saved = localStorage.getItem(STORAGE_KEY);
-  demoMemory = saved ? JSON.parse(saved) : createDemoWorkspace();
-  return structuredClone(demoMemory);
+function readLocal() {
+  try {const saved = localStorage.getItem(STORAGE_KEY); return saved ? validateWorkspace(JSON.parse(saved)) : createWorkspace();}
+  catch {throw new Error('Your saved schedule could not be read. Your browser data has been kept. Please contact support before clearing it.');}
 }
-function storeDemo(workspace) {
-  // Persist first: storage errors must not appear as a successful save.
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace));
-  demoMemory = structuredClone(workspace);
-  return workspace;
+function storeLocal(workspace) {
+  try {localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace));}
+  catch {throw new Error('Your changes could not be saved on this browser. Check available storage and try again.');}
 }
-
 async function request(path, {method = 'GET', body} = {}) {
-  const response = await fetch(BASE_URL + path, {
-    method, credentials: 'include', signal: AbortSignal.timeout(10000),
-    headers: {'Accept': 'application/json', ...(body ? {'Content-Type': 'application/json'} : {})},
-    body: body ? JSON.stringify(body) : undefined,
-    // ESP32 CONNECTION PLACEHOLDER 2: integrate your backend's CSRF header here for cookie-authenticated mutations.
-    // Never put an ESP32 device token in this browser code or a VITE_* variable.
-  });
-  if (!response.ok) throw new Error(`Backend request failed (${response.status}). Check the API connection and your session.`);
+  let response;
+  try {
+    response = await fetch(BASE_URL + path, {
+      method, credentials: 'include', signal: AbortSignal.timeout(10000),
+      headers: {'Accept': 'application/json', ...(body ? {'Content-Type': 'application/json'} : {})},
+      body: body ? JSON.stringify(body) : undefined,
+      // CONNECTION PLACEHOLDER: add the backend's CSRF header for cookie-authenticated writes.
+      // Device credentials and Wi-Fi passwords belong only in backend/firmware provisioning.
+    });
+  } catch {throw new Error('We could not connect. Check your connection and try again.');}
+  if (response.status === 401 || response.status === 403) throw new Error('Your session could not be verified. Please sign in again.');
+  if (!response.ok) throw new Error('Your changes could not be completed. Please try again.');
   if (response.status === 204) return null;
-  return response.json();
+  try {return await response.json();} catch {throw new Error('Your data could not be loaded. Please try again.');}
 }
-function validateWorkspace(value) {
-  if (!value || !Array.isArray(value.slots) || !Array.isArray(value.medicines) || !Array.isArray(value.events) || !value.settings || !value.device) throw new Error('Backend response does not match the workspace contract. See docs/ESP32_CONNECTION.md.');
-  return value;
-}
-
 export const smartmed = {
   async load() {
-    // ESP32 CONNECTION PLACEHOLDER 3: map GET /workspace to the payload documented in ESP32_CONNECTION.md.
-    // Live mode NEVER silently falls back to demo records.
-    return DATA_MODE === 'demo' ? readDemo() : validateWorkspace(await request('/workspace'));
+    // CONNECTION PLACEHOLDER: implement the workspace endpoint described in docs/ESP32_CONNECTION.md.
+    // Connection failures never insert sample records.
+    return DATA_MODE === 'local' ? readLocal() : validateWorkspace(await request('/workspace'));
   },
   async saveMedicine(medicine) {
     if (DATA_MODE === 'live') return request(`/medicines${medicine.id ? '/' + encodeURIComponent(medicine.id) : ''}`, {method: medicine.id ? 'PATCH' : 'POST', body: medicine});
-    const workspace = readDemo();
-    const saved = {...medicine, id: medicine.id || crypto.randomUUID()};
+    const workspace = readLocal();
+    const {reminderTime, ...entry} = medicine;
+    if (!entry.name?.trim() || !entry.strength?.trim() || !entry.quantity?.trim() || !workspace.slots.some(s => s.id === entry.slotId)) throw new Error('Complete the medicine details.');
+    if (!reminderTime) throw new Error('Choose a reminder time for this part of the day.');
+    const slots = workspace.slots.map(s => s.id === entry.slotId ? {...s, time: reminderTime} : s);
+    validateSlots(slots, workspace.settings.grace);
+    workspace.slots = slots;
+    const saved = {...entry, id: entry.id || crypto.randomUUID()};
     workspace.medicines = workspace.medicines.some(m => m.id === saved.id) ? workspace.medicines.map(m => m.id === saved.id ? saved : m) : [...workspace.medicines, saved];
-    storeDemo(workspace);
+    storeLocal(workspace);
   },
   async removeMedicine(id) {
     if (DATA_MODE === 'live') return request('/medicines/' + encodeURIComponent(id), {method: 'DELETE'});
-    const workspace = readDemo(); workspace.medicines = workspace.medicines.filter(m => m.id !== id); storeDemo(workspace);
+    const workspace = readLocal(); workspace.medicines = workspace.medicines.filter(m => m.id !== id); storeLocal(workspace);
   },
   async saveSlots(slots) {
     if (DATA_MODE === 'live') return request('/slots', {method: 'PUT', body: {slots}});
-    const workspace = readDemo(); validateSlots(slots, workspace.settings.grace); workspace.slots = slots; storeDemo(workspace);
-  },
-  async saveSettings(settings) {
-    if (DATA_MODE === 'live') return request('/settings', {method: 'PUT', body: settings});
-    const workspace = readDemo(); validateSlots(workspace.slots, settings.grace); workspace.settings = settings;
-    workspace.device.desiredConfigVersion += 1; storeDemo(workspace);
-  },
-  async simulate(action, instant = new Date()) {
-    if (DATA_MODE !== 'demo') throw new Error('Simulation is disabled in live mode.');
-    const workspace = readDemo();
-    if (action === 'toggleConnection') {
-      workspace.device.online = !workspace.device.online;
-    } else {
-      if (!workspace.device.online) throw new Error('Reconnect the demo device first.');
-      const opening = action === 'open';
-      if (workspace.device.lidState === (opening ? 'OPEN' : 'CLOSED')) throw new Error(opening ? 'Close the demo lid before opening it again.' : 'The demo lid is already closed.');
-      workspace.events.unshift({id: crypto.randomUUID(), deviceId: workspace.device.id, type: opening ? 'BOX_OPENED' : 'BOX_CLOSED', occurredAt: instant.toISOString(), source: 'Demo simulation', reminderContext: opening ? reminderContext(workspace, instant) : null});
-      workspace.device.lidState = opening ? 'OPEN' : 'CLOSED';
-      workspace.device.distanceCm = opening ? 14.1 : 3.2;
-      workspace.device.lastSeen = instant.toISOString();
-    }
-    storeDemo(workspace);
+    const workspace = readLocal(); validateSlots(slots, workspace.settings.grace);
+    if (slots.some(s => !s.time && workspace.medicines.some(m => m.slotId === s.id))) throw new Error('Keep a reminder time for every slot that has medicines.');
+    workspace.slots = slots; storeLocal(workspace);
   },
 };
