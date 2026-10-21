@@ -1,33 +1,45 @@
-# SmartMed
+# SmartMed — one box, four daily moments
 
-A responsive React dashboard for a four-compartment connected medicine box.
+A responsive React dashboard for a medicine box with **one shared lid, one ultrasonic sensor, four time-slot LEDs, and one external buzzer**.
 
 ## Run
+
+For step-by-step Windows/macOS/Linux instructions, see [LOCAL_SETUP.md](docs/LOCAL_SETUP.md).
 
 Use Node.js 22 or later.
 
 ```sh
-npm ci --cache /tmp/smartmed-npm-cache
+npm ci
 npm run dev -- --port 5173
+```
+
+```sh
+npm test
+npm run build
 ```
 
 `npm run build` creates the production frontend in `dist/`.
 
-## Included
+## What the app does
 
-- Overview with daily schedules, next reminder, compartments, and activity.
-- Add, edit, remove, and search daily medicines; one medicine per compartment.
-- Access history and CSV export.
-- Device page with ultrasonic reading simulation and disconnection simulation.
-- Care circle and locally saved patient, caregiver, sensor, and reminder preferences.
-- Responsive navigation and layouts for smaller screens.
+- Patient-friendly Today screen: medicine names, strengths, quantities, instructions, and the labelled section to use.
+- Morning, Afternoon, Evening, Night slots, each with an editable daily reminder time and multiple medicines.
+- One shared-lid device view, open/close simulation, whole-box history, and CSV export.
+- Care profile and locally saved reminder/sensor preferences.
+- Responsive navigation, accessible dialogs, and separate demo/live data adapters.
 
-This is a frontend prototype. Demo data and preferences are stored in browser localStorage. No real device, cloud synchronization, authentication, notification delivery, or automatic scheduling runs. Do not enter sensitive patient data into this prototype. Google Fonts is optional; local sans-serif fonts are used as fallback.
+**Box opened is not medicine taken.** One shared sensor cannot establish which section was accessed or verify medicine identity, quantity, or ingestion. An event's reminder context is a time association only. A caregiver must load the day's prescribed medicines and refill the box daily.
 
-## Hardware and backend integration
+## Connect ESP32 and backend
 
-Keep events sensor-independent: device ID, unique event ID, dose ID if applicable, compartment ID, event type, and occurrence timestamp. Distinguish compartment opening from confirmed ingestion. The sensor layer can later use ultrasonic, magnetic, or mechanical sensing without changing the dashboard event model.
+See [ESP32_CONNECTION.md](docs/ESP32_CONNECTION.md) for exact integration steps and payloads, [DEVICE_INTEGRATION.md](docs/DEVICE_INTEGRATION.md) for the architecture, and [HARDWARE_WIRING.md](docs/HARDWARE_WIRING.md) for the single-sensor wiring plan.
 
-For ultrasonic detection, calibrate the closed-lid distance per compartment, require a stable increase over the baseline, and rearm after a stable close. Threshold and signal-stability controls currently affect demo labels only. Test minimum measurement range, lid geometry, and crosstalk in the physical enclosure. Hardware may require level shifting; do not connect a 5 V echo signal directly to an ESP32 input.
+Copy `.env.example` to `.env.local`. Default `VITE_DATA_MODE=demo` works without a server. When Spring Boot implements the documented contract, set `VITE_DATA_MODE=live` and `VITE_API_BASE_URL` to its public API URL, then restart Vite. Search for `ESP32 CONNECTION PLACEHOLDER` in `src/api/smartmed.js` and `src/main.jsx` for the integration points. Never put device credentials in frontend variables.
 
-Suggested next step: connect Spring Boot REST endpoints for medicines, dose instances, device health, and idempotent access events, backed by MySQL. Persist timestamps in UTC and render in the user's timezone. Device offline state should delay missed-dose conclusions until queued access events are reconciled. Add authentication and authorization before storing real patient data.
+Live mode polls the backend every 10 seconds, disables demo hardware controls, and reports connection failures without substituting sample data. Authentication, CSRF/session integration, backend endpoints, database, real notifications, and firmware are still to be implemented.
+
+## Demo boundaries
+
+Demo medicines are illustrative, not prescriptions. State uses browser localStorage key `smartmed-shared-lid-v1`; earlier per-compartment prototype keys are left untouched. A shared-lid opening never updates a medicine-level intake flag. New days have separate reminder status; historical event context survives medicine changes.
+
+Demo events are created by opening/closing the simulated lid, not by measured distance. Threshold preferences do not configure physical hardware. Local demo reminder states are illustrative; real missed-opening decisions require backend coverage reconciliation. No real buzzer, LED, email, SMS, or background alarm is driven by this frontend. Google Fonts is optional with local sans-serif fallbacks. Do not enter sensitive patient data before authentication and a suitable deployment exist.
